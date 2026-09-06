@@ -766,6 +766,22 @@ verified negative result — still publishable, but at a lower tier. Plan for it
    never used."
 5. **Open dataset and harness.** Supporting, never the headline.
 
+**Finding (measured 2026-09-07, feeds contributions 1 and 2) — the escape hatch is
+conditionally reachable.** Arbitrum Sepolia's `delaySeconds` is 86400, and because
+`forceInclude` only acts on delayed messages the sequencer has not yet read, a healthy
+sequencer consumes the message hours before it becomes force-eligible. So: **Arbitrum's
+escape hatch is only exercisable while the failure it protects against is actually
+occurring, and in production it is therefore effectively never exercised.**
+
+This sharpens the usability argument rather than weakening it. The mechanism cannot be
+rehearsed, cannot be tested by a user in advance, and offers no way to build confidence in
+it before the moment it is needed — a user's first ever use of the escape hatch is
+necessarily under adversarial conditions. It also converts §12's expected near-zero Class A
+count from an awkward null result into a *predicted* one with a mechanical explanation,
+which is a stronger claim than "we looked and found nothing." Derivation of the bound from
+live parameters (§20.1) supports this analytically; E1 supplies the only empirical
+demonstration, which is why Experiment C is load-bearing.
+
 **What this paper must not become:** "we built a tool that measures L2 transactions." If the
 abstract's main verb is "we implemented," rewrite it.
 
@@ -797,7 +813,7 @@ it up as such rather than torturing the data.
 
 | Risk | Prob | Impact | Mitigation | Pivot |
 |---|---|---|---|---|
-| Arbitrum Sepolia `delaySeconds` is a full 24h, making testnet force legs impractical | High | Med | Read it Day 2; plan the force leg for E1 | Force leg lives entirely in devnet; testnet measures the auto-inclusion leg only |
+| ~~Arbitrum Sepolia `delaySeconds` is a full 24h~~ **RESOLVED 2026-09-07 — occurred, and is worse than "impractical": see below** | High | Med | Read Day 2 — done, live value 86400 | **Taken:** force leg lives entirely in devnet; testnet measures the auto-inclusion leg only |
 | Nitro devnet censorship rig doesn't work | Med | **High** | Front-load to Days 5–6; the flag is the only unknown | Reduce C to a single documented case study; lean the paper on B + the asymmetry analysis |
 | Base Sepolia portal address unresolvable | Low | Low | superchain-registry, Day 2 | Drop Base; it is replication, not core |
 | Protocol upgrade mid-study | Med | Med | `param_snapshots` per campaign | Re-run affected cells; report the discontinuity as data |
@@ -805,6 +821,44 @@ it up as such rather than torturing the data.
 | Class A mainnet events ≈ 0 | **High** | Low | Expected | Report as a finding; lean on dYdX |
 | Cross-protocol comparison challenged | High | Low | Already resolved via case-study framing | None needed — this is pre-defended |
 | Scope creep into ZKsync | Med | Med | Time-boxed to half a day | Drop it |
+
+### 20.1 Resolved parameters
+
+**Arbitrum Sepolia `delaySeconds` = 86400 (24h).** Read live 2026-09-07 from
+`SequencerInbox.maxTimeVariation()` at `0x6c97864CE4bEf387dE0b3310A44230f7E3F1be0D`
+(`delayBlocks = 7200`, `futureBlocks = 64`, `futureSeconds = 768`; 7200 × 12s = 86400s, so
+the block and second bounds agree). The post-BoLD signature is intact — the read did not
+fail, so no fallback was needed.
+
+**This does not merely make the testnet force leg impractical. It makes it structurally
+impossible, and no amount of waiting fixes it.** `forceInclude` can only act on delayed
+messages the sequencer has *not yet read*. A healthy Arbitrum Sepolia sequencer reads the
+delayed inbox voluntarily in roughly ten minutes, advancing `totalDelayedMessagesRead` past
+our message long before the 24-hour window opens. By the time the message is force-eligible
+it has already been included, and there is nothing left to force. The two conditions —
+"delay elapsed" and "message still unread" — cannot both hold on a healthy public testnet.
+Waiting longer makes this worse, not better.
+
+The general statement, which belongs in the paper: **Arbitrum's escape hatch is only
+exercisable while the failure it protects against is actually occurring.** Absent
+censorship the mechanism is unreachable by construction, which is precisely why §12 should
+expect Class A mainnet counts near zero — not as a sampling artifact, but as a structural
+property of the mechanism.
+
+Two consequences for the harness, both to be stated rather than discovered later:
+
+1. **S5 and S6 will have zero testnet rows for Arbitrum, by construction.** This is not
+   missing data and must not be imputed, back-filled, or treated as measurement failure.
+   `supportedStages` may still list them — the devnet (E1) produces them — but any E2
+   Arbitrum export will show them empty. The export should distinguish "stage not reached"
+   from "stage not applicable in this environment."
+2. **The Arbitrum public-testnet leg is auto-inclusion, not forced inclusion.** Per §16 that
+   labelling was already required; it is now the *only* thing E2 can measure for Arbitrum.
+   It is also the clean comparable against OP Stack's deposit path: both are "user submits
+   via L1, protocol includes it without further user action," which is exactly the scope
+   `M-L2` was defined for. The comparison gets stronger, not weaker — but it is a
+   comparison of auto-inclusion paths, and calling it a forced-path comparison would be
+   wrong (see I4).
 
 **Hard stop conditions.** A protocol that cannot produce a reproducible forced-path
 measurement after **5 working days** is removed, not debugged further. A mechanism that
