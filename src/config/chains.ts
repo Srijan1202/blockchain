@@ -49,6 +49,17 @@ export interface L2Config {
    * never be reported as though it had provenance.
    */
   statedForcedBoundSource: string | null;
+  /**
+   * Provenance state of `statedForcedBoundSec`. A null value is NOT sufficient
+   * to infer a gap: Arbitrum's bound is deliberately null because it is read
+   * live from maxTimeVariation() every run, whereas Base's is null because no
+   * source could be located. Reporting the former as unverified would be the
+   * same error as hiding the latter, so the distinction is explicit:
+   *   "verified"   - static value with a recorded source
+   *   "runtime"    - intentionally absent; resolved on-chain at snapshot time
+   *   "UNVERIFIED" - no source located; must block the verify gate
+   */
+  statedForcedBoundVerification: Verification | "runtime";
   notes: string;
 }
 
@@ -102,6 +113,7 @@ export const ARB_SEPOLIA: L2Config = {
   // 86400 - the testnet value may differ from Arbitrum One.
   statedForcedBoundSec: null,
   statedForcedBoundSource: null, // read live from SequencerInbox.maxTimeVariation()
+  statedForcedBoundVerification: "runtime",
   notes:
     "Forced path: Inbox.sendL2Message -> delayed inbox -> wait delay -> SequencerInbox.forceInclude. User action required.",
 };
@@ -132,6 +144,7 @@ export const OP_SEPOLIA: L2Config = {
   statedForcedBoundSec: 3600 * 12,
   statedForcedBoundSource:
     "superchain-registry superchain/configs/sepolia/op.toml seq_window_size = 3600 L1 blocks x 12s = 43200s (rollup config, not on-chain)",
+  statedForcedBoundVerification: "verified",
   notes:
     "Forced path: OptimismPortal.depositTransaction -> TransactionDeposited -> derivation includes as type 0x7E. No user force call.",
 };
@@ -168,6 +181,7 @@ export const BASE_SEPOLIA: L2Config = {
   // rather than a plausible guess: see CLAUDE.md I1.
   statedForcedBoundSec: null,
   statedForcedBoundSource: null,
+  statedForcedBoundVerification: "UNVERIFIED",
   notes:
     "Same stack as OP Sepolia. Serves as intra-family replication check, not a separate architecture. Sequencing window UNVERIFIED - resolve before Base is used for any bound-related claim.",
 };
@@ -182,14 +196,62 @@ export const L2S: Record<string, L2Config> = {
   [BASE_SEPOLIA.key]: BASE_SEPOLIA,
 };
 
-export function unverifiedRefs(): Array<{ chain: string; contract: string; source: string }> {
-  const out: Array<{ chain: string; contract: string; source: string }> = [];
+/**
+ * A single thing the registry does not yet know, discriminated by `kind` so a
+ * caller can tell a missing address from a missing parameter without parsing
+ * the name. Both block experiments, but they are resolved differently: an
+ * address gap is looked up in a deployment registry, a parameter gap in a
+ * rollup config.
+ */
+export interface UnverifiedItem {
+  chain: string;
+  kind: "address" | "parameter";
+  name: string;
+  source: string;
+}
+
+/** Unverified L1 contract addresses. */
+export function unverifiedAddresses(): UnverifiedItem[] {
+  const out: UnverifiedItem[] = [];
   for (const [chainKey, cfg] of Object.entries(L2S)) {
     for (const [name, ref] of Object.entries(cfg.l1Contracts)) {
       if (ref.verification === "UNVERIFIED" || ref.address === null) {
-        out.push({ chain: chainKey, contract: name, source: ref.source });
+        out.push({ chain: chainKey, kind: "address", name, source: ref.source });
       }
     }
   }
   return out;
+}
+
+/**
+ * Unverified protocol parameters.
+ *
+ * Keyed on `verification`, never on the value being null: a null bound that is
+ * resolved live on-chain ("runtime") is fully known, while a null bound with no
+ * located source is not. Testing for null alone would flag Arbitrum, which is
+ * correct by design, and that false positive would erode trust in this report
+ * just as surely as the false negative it replaces.
+ */
+export function unverifiedParameters(): UnverifiedItem[] {
+  const out: UnverifiedItem[] = [];
+  for (const [chainKey, cfg] of Object.entries(L2S)) {
+    if (cfg.statedForcedBoundVerification === "UNVERIFIED") {
+      out.push({
+        chain: chainKey,
+        kind: "parameter",
+        name: "statedForcedBoundSec",
+        source: cfg.statedForcedBoundSource ?? "no source located",
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Everything still unknown, addresses and parameters alike. This is the
+ * authoritative answer to "what do I not know yet" and the verify gate is
+ * built on it, so anything the registry cannot vouch for must appear here.
+ */
+export function unverifiedRefs(): UnverifiedItem[] {
+  return [...unverifiedAddresses(), ...unverifiedParameters()];
 }
