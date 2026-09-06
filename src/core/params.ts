@@ -152,7 +152,11 @@ export async function snapshotParams(chainKey: string): Promise<ParamSnapshot> {
     // chain whose bound has no located rollup config (Base Sepolia) must be
     // recorded as an error, not handed a borrowed provenance label that would
     // later be persisted as source='rollup-config'.
-    if (cfg.statedForcedBoundSec === null || cfg.statedForcedBoundSource === null) {
+    if (
+      cfg.statedForcedBoundVerification === "UNVERIFIED" ||
+      cfg.statedForcedBoundSec === null ||
+      cfg.statedForcedBoundSource === null
+    ) {
       snap.errors.push(
         "statedForcedBoundSec UNVERIFIED - no first-party rollup config located for this chain; must not be recorded as 'rollup-config'",
       );

@@ -125,13 +125,37 @@ async function main(): Promise<void> {
     console.log("  none");
   } else {
     for (const t of todo) {
-      console.log(`  ${t.chain}.${t.contract} -> ${t.source}`);
+      console.log(`  [${t.kind}] ${t.chain}.${t.name} -> ${t.source}`);
     }
   }
 
+  // Exit status is graded rather than binary, because the two failure modes
+  // differ in kind and collapsing them would hide the more urgent one:
+  //
+  //   0  every chain check passed AND nothing is unverified
+  //   1  a chain check failed - the harness cannot measure anything at all
+  //   2  chains are reachable, but at least one value is unverified
+  //
+  // An unresolved bound on a replication chain is genuinely less severe than a
+  // dead RPC, so it earns its own state instead of being folded into 1. But it
+  // must still be NON-ZERO and must never print MET. This command is the
+  // authoritative answer to "what do I not know yet"; reporting success while
+  // an UNVERIFIED line is on screen is the same failure class as I1/I2, just
+  // relocated into the reporting layer. Chain failures take precedence because
+  // an unreachable RPC makes the unverified count itself unreliable.
   const failed = chains.filter((c) => !c.ok).length;
-  console.log(`\nDay-1 exit criterion: ${failed === 0 ? "MET" : `NOT MET (${failed} chain check(s) failing)`}\n`);
-  process.exitCode = failed === 0 ? 0 : 1;
+  let verdict: string;
+  if (failed > 0) {
+    verdict = `NOT MET (${failed} chain check(s) failing)`;
+    process.exitCode = 1;
+  } else if (todo.length > 0) {
+    verdict = `NOT MET (${todo.length} unverified item(s) - see above)`;
+    process.exitCode = 2;
+  } else {
+    verdict = "MET";
+    process.exitCode = 0;
+  }
+  console.log(`\nDay-1 exit criterion: ${verdict}\n`);
 }
 
 main().catch((e) => {
