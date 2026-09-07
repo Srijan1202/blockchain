@@ -16,6 +16,7 @@ import { ARBITRUM_SUPPORTED_STAGES, type ProtocolAdapter, type RunContext } from
 import { BRIDGE_ABI, INBOX_ABI, MESSAGE_KIND, SEQUENCER_INBOX_ABI } from "./abi.js";
 import {
   assessForceReachability,
+  type InclusionPath,
   buildForceIncludeArgs,
   classifyInclusion,
   computeForceEligibility,
@@ -77,9 +78,21 @@ export class ArbitrumAdapter implements ProtocolAdapter {
   private readonly pollIntervalMs: number;
   private readonly stageTimeoutMs: number;
 
-  /** Set by submitForced so track() and completeForced() can use it. */
-  private delayedMessage: DelayedMessage | null = null;
-  private sawForceAction = false;
+  /**
+   * Per-run state, keyed by runId.
+   *
+   * NOT instance fields. T11 reuses one adapter across a whole campaign, so
+   * instance state would let run N inherit run N-1's: a run that was actually
+   * auto-included would be labelled inclusion=forced because the previous run
+   * had forced. That is a fabricated measurement of the paper's central
+   * distinction.
+   *
+   * Resetting at the top of submitForced was rejected: it papers over the
+   * symptom and breaks again the moment two runs overlap, which is exactly when
+   * the corruption would be hardest to notice. Keying by runId is correct
+   * regardless of ordering or concurrency.
+   */
+  private readonly runState = new Map<string, { delayedMessage: DelayedMessage | null; sawForceAction: boolean }>();
 
   constructor(chainKey: string, opts: ArbitrumAdapterOptions = {}) {
     const cfg = L2S[chainKey];
@@ -94,6 +107,41 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     this.sequencerInbox = requireAddress(cfg, "sequencerInbox");
     this.pollIntervalMs = opts.pollIntervalMs ?? 2_000;
     this.stageTimeoutMs = opts.stageTimeoutMs ?? 30 * 60_000;
+  }
+
+  private stateFor(runId: string) {
+    let state = this.runState.get(runId);
+    if (!state) {
+      state = { delayedMessage: null, sawForceAction: false };
+      this.runState.set(runId, state);
+    }
+    return state;
+  }
+
+  /**
+   * Record that a force action happened for this run. Called when forceInclude
+   * is submitted and when track() observes S6.
+   */
+  markForceAction(runId: string): void {
+    this.stateFor(runId).sawForceAction = true;
+  }
+
+  /** Whether a force action was seen for this run. */
+  hasForceAction(runId: string): boolean {
+    return this.stateFor(runId).sawForceAction;
+  }
+
+  /**
+   * How this run reached L2. 'forced' only if THIS run saw a force action -
+   * never inherited from a sibling run on the same adapter.
+   */
+  inclusionPathFor(runId: string, reachedL2: boolean): InclusionPath {
+    return classifyInclusion(this.stateFor(runId).sawForceAction, reachedL2);
+  }
+
+  /** Drop a finished run's state so a long campaign does not accumulate it. */
+  releaseRun(runId: string): void {
+    this.runState.delete(runId);
   }
 
   private l1(): PublicClient {
@@ -225,10 +273,13 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       throw new ForceUnreachable(reach.reason);
     }
 
-    if (this.delayedMessage === null) {
-      throw new Error("completeForced called before a delayed message was queued by submitForced");
+    const state = this.stateFor(ref.runId);
+    if (state.delayedMessage === null) {
+      throw new Error(
+        `completeForced called for run ${ref.runId} before its delayed message was observed by track()`,
+      );
     }
-    const args = buildForceIncludeArgs(this.delayedMessage);
+    const args = buildForceIncludeArgs(state.delayedMessage);
 
     if (ctx.dryRun) {
       ctx.logger.info(
@@ -267,9 +318,9 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       }),
       chain: null,
     });
-    this.sawForceAction = true;
+    this.markForceAction(ref.runId);
     ctx.logger.info(
-      { chain: this.chainKey, l1_force_hash: hash, metric: "M-U1", user_initiated_l1_txs: 2 },
+      { chain: this.chainKey, run_id: ref.runId, l1_force_hash: hash, metric: "M-U1", user_initiated_l1_txs: 2 },
       "forceInclude submitted - this is the second user-initiated L1 transaction",
     );
     return { ...ref, l1ForceHash: hash };
@@ -324,7 +375,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       );
       return;
     }
-    this.delayedMessage = queued;
+    this.stateFor(submission.runId).delayedMessage = queued;
     yield makeEvent(ctx, "S4", "L1", "l1_block", "observed", {
       blockNumber: receipt.blockNumber,
       blockTimestamp: l1Block.timestamp,
@@ -350,7 +401,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       const forceReceipt = await this.waitForL1Receipt(l1, submission.l1ForceHash, ctx);
       if (forceReceipt) {
         const forceBlock = await l1.getBlock({ blockNumber: forceReceipt.blockNumber });
-        this.sawForceAction = true;
+        this.markForceAction(submission.runId);
         yield makeEvent(ctx, "S6", "L1", "l1_block", "observed", {
           blockNumber: forceReceipt.blockNumber,
           blockTimestamp: forceBlock.timestamp,
@@ -364,7 +415,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     const appeared = await this.waitForL2Tx(l2, submission.l2TxHash, ctx);
     if (!appeared) return;
 
-    const path = classifyInclusion(this.sawForceAction, true);
+    const path = this.inclusionPathFor(submission.runId, true);
     ctx.logger.info(
       { chain: this.chainKey, inclusion_path: path, environment: ctx.environment },
       path === "auto"
