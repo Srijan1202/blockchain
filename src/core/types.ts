@@ -24,6 +24,9 @@ export type ClockSource = "wall" | "l1_block" | "l2_block";
 export type Confidence = "observed" | "inferred";
 
 export type ChainLayer = "L1" | "L2";
+
+/** The three environments of BLUEPRINT section 2: E1 devnet, E2 testnet, E3 mainnet. */
+export type Environment = "devnet" | "testnet" | "mainnet";
 export type RunPath = "normal" | "forced";
 export type TxKind = "eth_transfer" | "contract_call";
 export type Outcome = "pending" | "success" | "failed" | "timeout";

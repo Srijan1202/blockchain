@@ -80,6 +80,7 @@ export function initDb(dbPath?: string): DatabaseHandle {
 import type {
   ChainLayer,
   ClockSource,
+  Environment,
   Confidence,
   LifecycleStage,
   Outcome,
@@ -87,10 +88,9 @@ import type {
   TxKind,
 } from "../core/types.js";
 
-export type { ChainLayer, ClockSource, Confidence, LifecycleStage, Outcome, RunPath, TxKind };
+export type { ChainLayer, ClockSource, Confidence, Environment, LifecycleStage, Outcome, RunPath, TxKind };
 
 /** Storage-only unions: these have no domain-model counterpart. */
-export type Environment = "devnet" | "testnet" | "mainnet";
 export type ExperimentType = "A" | "B" | "C" | "C_prime" | "D" | "E";
 export type MainnetClass = "A" | "B" | "C" | "D";
 
