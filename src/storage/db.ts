@@ -77,6 +77,7 @@ export function initDb(dbPath?: string): DatabaseHandle {
 // disagree with the type system about what a valid row is.
 // ---------------------------------------------------------------------------
 
+import type { U256String } from "./encode.js";
 import type {
   ChainLayer,
   ClockSource,
@@ -137,8 +138,12 @@ export interface ParamSnapshotRow {
   taken_at: string;
   l1_block: number;
   key: string;
-  /** Always TEXT - may be a uint256. */
-  value: string;
+  /**
+   * Always TEXT. Deliberately NOT branded U256String: this column also holds
+   * non-numeric parameters such as portalVersion "5.6.1". Numeric values put
+   * here should still be produced by u256().
+   */
+  value: U256String | string;
   source: ParamSource;
 }
 
@@ -150,8 +155,8 @@ export interface RunRow {
   tx_kind: TxKind;
   sender: string;
   nonce?: number | null;
-  /** uint256 as string. */
-  gas_limit?: string | null;
+  /** uint256. Only encode.ts can produce this - see U256String. */
+  gas_limit?: U256String | null;
   calldata_bytes: number;
   l1_tx_hash?: string | null;
   l1_force_hash?: string | null;
@@ -176,18 +181,18 @@ export interface LifecycleEventRow {
   raw_ref?: string | null;
 }
 
-/** Every field is a uint256 and therefore a string. */
+/** Every field is a uint256, so every field is a U256String from encode.ts. */
 export interface CostRow {
   run_id: string;
-  l1_gas_used?: string | null;
-  l1_gas_price?: string | null;
-  l1_fee_wei?: string | null;
-  force_gas_used?: string | null;
-  force_fee_wei?: string | null;
-  l2_gas_used?: string | null;
-  l2_fee_wei?: string | null;
-  total_fee_wei?: string | null;
-  l1_base_fee_at_submit?: string | null;
+  l1_gas_used?: U256String | null;
+  l1_gas_price?: U256String | null;
+  l1_fee_wei?: U256String | null;
+  force_gas_used?: U256String | null;
+  force_fee_wei?: U256String | null;
+  l2_gas_used?: U256String | null;
+  l2_fee_wei?: U256String | null;
+  total_fee_wei?: U256String | null;
+  l1_base_fee_at_submit?: U256String | null;
 }
 
 export interface MainnetEventRow {
@@ -298,6 +303,90 @@ export function insertLifecycleEvent(db: DatabaseHandle, row: LifecycleEventRow)
 
 export function setLifecycleFinalized(db: DatabaseHandle, eventId: string, finalized: boolean): void {
   db.prepare("UPDATE lifecycle_events SET finalized = ? WHERE event_id = ?").run(finalized ? 1 : 0, eventId);
+}
+
+export function getLifecycleEvent(
+  db: DatabaseHandle,
+  runId: string,
+  stage: LifecycleStage,
+): LifecycleEventRow | undefined {
+  return db
+    .prepare("SELECT * FROM lifecycle_events WHERE run_id = ? AND stage = ?")
+    .get(runId, stage) as LifecycleEventRow | undefined;
+}
+
+export type RevisionReason = "reorg" | "recheck";
+
+/**
+ * Preserve a superseded observation before it is overwritten.
+ *
+ * See migrations/002 for the reasoning: lifecycle_events keeps one current row
+ * per (run_id, stage), and every prior version lands here instead of being
+ * lost. A reorg that moved a measurement is data.
+ */
+export function insertLifecycleRevision(
+  db: DatabaseHandle,
+  prior: LifecycleEventRow,
+  reason: RevisionReason,
+  supersededAt: string,
+): void {
+  db.prepare(
+    `INSERT INTO lifecycle_event_revisions
+       (revision_id, event_id, run_id, stage, chain_layer, block_number, block_timestamp,
+        observed_at, clock_source, confidence, finalized, raw_ref, reason, superseded_at)
+     VALUES
+       (@revision_id, @event_id, @run_id, @stage, @chain_layer, @block_number, @block_timestamp,
+        @observed_at, @clock_source, @confidence, @finalized, @raw_ref, @reason, @superseded_at)`,
+  ).run({
+    revision_id: `${prior.run_id}:${prior.stage}:${supersededAt}`,
+    event_id: prior.event_id,
+    run_id: prior.run_id,
+    stage: prior.stage,
+    chain_layer: prior.chain_layer,
+    block_number: prior.block_number ?? null,
+    block_timestamp: prior.block_timestamp ?? null,
+    observed_at: prior.observed_at ?? null,
+    clock_source: prior.clock_source,
+    confidence: prior.confidence,
+    finalized: prior.finalized ?? 0,
+    raw_ref: prior.raw_ref ?? null,
+    reason,
+    superseded_at: supersededAt,
+  });
+}
+
+/** Overwrite the current observation for a stage. Callers must revise first. */
+export function updateLifecycleEvent(db: DatabaseHandle, row: LifecycleEventRow): void {
+  db.prepare(
+    `UPDATE lifecycle_events SET
+       chain_layer = @chain_layer, block_number = @block_number,
+       block_timestamp = @block_timestamp, observed_at = @observed_at,
+       clock_source = @clock_source, confidence = @confidence,
+       finalized = @finalized, raw_ref = @raw_ref
+     WHERE run_id = @run_id AND stage = @stage`,
+  ).run({
+    chain_layer: row.chain_layer,
+    block_number: row.block_number ?? null,
+    block_timestamp: row.block_timestamp ?? null,
+    observed_at: row.observed_at ?? null,
+    clock_source: row.clock_source,
+    confidence: row.confidence,
+    finalized: row.finalized ?? 0,
+    raw_ref: row.raw_ref ?? null,
+    run_id: row.run_id,
+    stage: row.stage,
+  });
+}
+
+export function lifecycleRevisions(
+  db: DatabaseHandle,
+  runId: string,
+): Array<{ stage: string; block_number: number | null; reason: string; superseded_at: string }> {
+  return db
+    .prepare(
+      "SELECT stage, block_number, reason, superseded_at FROM lifecycle_event_revisions WHERE run_id = ? ORDER BY superseded_at",
+    )
+    .all(runId) as Array<{ stage: string; block_number: number | null; reason: string; superseded_at: string }>;
 }
 
 export function upsertCosts(db: DatabaseHandle, row: CostRow): void {
