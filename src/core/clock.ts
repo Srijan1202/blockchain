@@ -1,3 +1,4 @@
+import { L2S } from "../config/chains.js";
 import type { ClockSource, LifecycleStage } from "./types.js";
 
 /**
@@ -8,26 +9,42 @@ import type { ClockSource, LifecycleStage } from "./types.js";
  * involved in a calculation. A duration spanning an L1 boundary has ~12s
  * resolution no matter how precisely the other end was measured, and saying
  * otherwise would dress proposer-set block timestamps up as network latency.
+ *
+ * L2 resolution is PER CHAIN, not global. Arbitrum Sepolia produces blocks at
+ * ~0.25s and the OP chains at 2s; a single l2_block constant would overstate
+ * Arbitrum's precision by 8x or understate OP's, and the error would be
+ * invisible in the output. The value comes from blockTimeSec in the chain
+ * registry, which is the one place chain facts are recorded.
  */
 
+/** Nominal resolution of an NTP-synced local clock, in seconds. */
+export const WALL_RESOLUTION_SECONDS = 0.001;
+
 /**
- * Nominal resolution of each clock, in seconds. These constants live HERE and
- * nowhere else in the codebase - a second copy is how a mixed-clock metric
- * quietly acquires a precision it never had.
- *
- * CAVEAT worth carrying into the write-up: 0.001 is the nominal resolution of
- * an NTP-synced local clock, but Timestamped carries whole `seconds` as a
- * bigint, so a wall reading is already quantised to 1s in this representation.
- * That only matters for a wall -> wall duration, where this table would claim
- * 0.001s while the data supports at most 1s. No metric in section 9 is
- * wall -> wall (M-L1 ends on an L1 block, so it resolves to 12s), but if one is
- * ever added, this constant is understated for it and must be revisited.
+ * L1 block resolution, in seconds. Global because every rollup here settles to
+ * the same Ethereum L1, whose ~12s slot time is shared and proposer-set.
  */
-export const CLOCK_RESOLUTION_SECONDS: Readonly<Record<ClockSource, number>> = {
-  wall: 0.001,
-  l2_block: 2,
-  l1_block: 12,
-};
+export const L1_BLOCK_RESOLUTION_SECONDS = 12;
+
+export type ClockResolutions = Readonly<Record<ClockSource, number>>;
+
+/**
+ * Resolutions for one L2.
+ *
+ * CAVEAT worth carrying into the write-up: wall is listed at its nominal
+ * 0.001s, but Timestamped carries whole `seconds` as a bigint, so a wall
+ * reading is already quantised to 1s in this representation. That only matters
+ * for a wall -> wall duration, and no section 9 metric is wall -> wall (M-L1
+ * ends on an L1 block, so it resolves to 12s). If one is ever added, this
+ * constant is understated for it and must be revisited.
+ */
+export function clockResolutions(l2BlockTimeSec: number): ClockResolutions {
+  return {
+    wall: WALL_RESOLUTION_SECONDS,
+    l1_block: L1_BLOCK_RESOLUTION_SECONDS,
+    l2_block: l2BlockTimeSec,
+  };
+}
 
 /** A point in time, carrying the clock it was read from. */
 export interface Timestamped {
@@ -40,8 +57,8 @@ export interface Timestamped {
  * An elapsed time between two lifecycle stages.
  *
  * `resolutionSeconds` is required, so the compiler rejects any Duration
- * constructed without one; `duration()` below is the only intended way to make
- * one. A Duration that does not declare its own precision cannot exist.
+ * constructed without one. A Duration that does not declare its own precision
+ * cannot exist.
  */
 export interface Duration {
   readonly seconds: bigint;
@@ -53,34 +70,73 @@ export interface Duration {
   readonly toStage: LifecycleStage;
   readonly fromClock: ClockSource;
   readonly toClock: ClockSource;
+  /** Which chain's L2 resolution was applied. Makes the number self-describing. */
+  readonly chainKey: string;
 }
 
 /**
- * Elapsed time from one stage to another.
+ * Elapsed time between two stages, against an explicit resolution table.
+ *
+ * Prefer clockFor(chainKey).duration(...) at call sites; this form exists so
+ * the resolutions can be supplied directly without a registry lookup.
  *
  * The result is negative if `to` precedes `from`. That is left as-is on
  * purpose: with proposer-set timestamps and reorgs, a negative duration is a
  * real observation about the data and clamping it to zero would erase the
  * evidence (I6 - a surprising result is data, not an error).
  */
-export function duration(
+export function durationWith(
+  chainKey: string,
+  resolutions: ClockResolutions,
   from: Timestamped,
   to: Timestamped,
   fromStage: LifecycleStage,
   toStage: LifecycleStage,
 ): Duration {
-  const fromResolution = CLOCK_RESOLUTION_SECONDS[from.clockSource];
-  const toResolution = CLOCK_RESOLUTION_SECONDS[to.clockSource];
-
   return {
     seconds: to.seconds - from.seconds,
     mixedClock: from.clockSource !== to.clockSource,
     // Coarser means the LARGER interval: a 12s L1 block bounds the precision of
     // anything measured against it, however finely the other end was read.
-    resolutionSeconds: Math.max(fromResolution, toResolution),
+    resolutionSeconds: Math.max(resolutions[from.clockSource], resolutions[to.clockSource]),
     fromStage,
     toStage,
     fromClock: from.clockSource,
     toClock: to.clockSource,
+    chainKey,
+  };
+}
+
+/** A clock bound to one chain's resolutions. */
+export interface ChainClock {
+  readonly chainKey: string;
+  readonly resolutions: ClockResolutions;
+  duration(
+    from: Timestamped,
+    to: Timestamped,
+    fromStage: LifecycleStage,
+    toStage: LifecycleStage,
+  ): Duration;
+}
+
+/**
+ * Clock for one registered L2, taking its block time from the chain registry.
+ * Throws on an unknown chain rather than falling back to a default: a silently
+ * assumed block time is exactly the kind of invented constant I1 forbids.
+ */
+export function clockFor(chainKey: string): ChainClock {
+  const cfg = L2S[chainKey];
+  if (!cfg) {
+    throw new Error(
+      `Unknown chain ${chainKey}: cannot determine L2 clock resolution. ` +
+        `Register it in config/chains.ts with a sourced blockTimeSec.`,
+    );
+  }
+  const resolutions = clockResolutions(cfg.blockTimeSec);
+  return {
+    chainKey,
+    resolutions,
+    duration: (from, to, fromStage, toStage) =>
+      durationWith(chainKey, resolutions, from, to, fromStage, toStage),
   };
 }
