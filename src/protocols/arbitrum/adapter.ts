@@ -189,6 +189,11 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     const account = ctx.dryRun ? dryRunAccount() : this.account();
     const l2 = this.l2();
 
+    // DRY-RUN ARTIFACT: with a fixed throwaway key and nonce 0, every dry run
+    // signs an identical transaction and therefore reports the same l2_tx_hash.
+    // That is expected and harmless - nothing is sent - but dry-run rows must
+    // not be read as distinct transactions. A real run reads the nonce from
+    // chain, so hashes differ per run.
     const nonce = ctx.dryRun ? 0 : await l2.getTransactionCount({ address: account.address });
     const fees = ctx.dryRun
       ? { maxFeePerGas: 100_000_000n, maxPriorityFeePerGas: 0n }

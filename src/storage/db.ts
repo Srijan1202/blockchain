@@ -263,6 +263,29 @@ export function insertRun(db: DatabaseHandle, row: RunRow): void {
   });
 }
 
+/** Record the hashes once a submission returns. The run row is claimed first. */
+export function setRunSubmission(
+  db: DatabaseHandle,
+  runId: string,
+  hashes: { l1TxHash?: string | null; l1ForceHash?: string | null; l2TxHash?: string | null },
+): void {
+  db.prepare(
+    `UPDATE runs SET l1_tx_hash = COALESCE(@l1_tx_hash, l1_tx_hash),
+                     l1_force_hash = COALESCE(@l1_force_hash, l1_force_hash),
+                     l2_tx_hash = COALESCE(@l2_tx_hash, l2_tx_hash)
+     WHERE run_id = @run_id`,
+  ).run({
+    run_id: runId,
+    l1_tx_hash: hashes.l1TxHash ?? null,
+    l1_force_hash: hashes.l1ForceHash ?? null,
+    l2_tx_hash: hashes.l2TxHash ?? null,
+  });
+}
+
+export function experimentExists(db: DatabaseHandle, experimentId: string): boolean {
+  return db.prepare("SELECT 1 FROM experiments WHERE experiment_id = ?").get(experimentId) !== undefined;
+}
+
 export function setRunOutcome(
   db: DatabaseHandle,
   runId: string,
