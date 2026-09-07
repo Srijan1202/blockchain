@@ -122,9 +122,10 @@ export async function trackRun(
     revisions += persistEvent(db, event, ctx, "reorg");
     observed.set(event.stage, event);
     lastStage = event.stage;
+    // run_id is bound by childLogger; repeating it here would emit a duplicate
+    // JSON key, and the log is a research artifact that gets parsed.
     log.info(
       {
-        run_id: ctx.runId,
         stage: event.stage,
         clock_source: event.clockSource,
         block_number: event.blockNumber?.toString() ?? null,
