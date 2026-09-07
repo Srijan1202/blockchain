@@ -42,7 +42,11 @@ export interface TrackerOptions {
    * Omitted means no re-verification is possible and rows stay unfinalised.
    */
   reverify?: (event: LifecycleEvent) => Promise<{ blockNumber: bigint; blockTimestamp: bigint } | null>;
-  /** Costs for this run, if known. A row is always written, even if empty. */
+  /**
+   * Costs for this run, if observed. When omitted NO costs row is written -
+   * absence means "not observed", never "measured as zero". See the decision
+   * recorded at the write site below.
+   */
   costs?: CostRecord;
   now?: () => number;
 }
@@ -164,10 +168,25 @@ export async function trackRun(
   const outcome: Outcome = timedOut ? "timeout" : observed.size === 0 ? "pending" : "success";
   setRunOutcome(db, ctx.runId, outcome, null);
 
-  // Always write a costs row for the run, even if every field is null: the row
-  // records that the run happened and that costs were not observed, which is
-  // different from the run being absent.
-  upsertCosts(db, toCostRow(opts.costs ?? emptyCosts(ctx.runId)));
+  // COSTS DECISION - write a row only when costs were actually observed.
+  //
+  // An all-null row was rejected for the same reason param_snapshots refuses a
+  // sourceless value: absence of observation must not wear the shape of an
+  // observation. A row of nulls is indistinguishable at analysis time from a
+  // dry run, from a real run whose receipt never arrived, and from a genuine
+  // measurement of zero - and SUM/AVG over that column would silently include
+  // runs that were never measured.
+  //
+  // The alternative, a row plus an "observed" flag, was rejected as duplicated
+  // state: the runs row already answers why costs are missing. A dry run has no
+  // tx hashes, and outcome distinguishes 'timeout' from 'success'. Absence in
+  // costs plus the runs row is complete, and a LEFT JOIN yields NULL either way
+  // without anyone having to remember a flag.
+  if (opts.costs) {
+    upsertCosts(db, toCostRow(opts.costs));
+  } else {
+    log.debug({ run_id: ctx.runId }, "no costs observed for this run - writing no costs row");
+  }
 
   const durations = computeDurations(ctx.chainKey, observed);
   const stagesMissing = [...adapter.supportedStages].filter((s) => !observed.has(s)).sort();
@@ -262,19 +281,4 @@ async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promi
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-function emptyCosts(runId: string): CostRecord {
-  return {
-    runId,
-    l1GasUsed: null,
-    l1GasPrice: null,
-    l1FeeWei: null,
-    forceGasUsed: null,
-    forceFeeWei: null,
-    l2GasUsed: null,
-    l2FeeWei: null,
-    totalFeeWei: null,
-    l1BaseFeeAtSubmit: null,
-  };
 }
