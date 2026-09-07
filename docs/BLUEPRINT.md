@@ -782,6 +782,42 @@ which is a stronger claim than "we looked and found nothing." Derivation of the 
 live parameters (§20.1) supports this analytically; E1 supplies the only empirical
 demonstration, which is why Experiment C is load-bearing.
 
+**Supporting measurement (Arbitrum Sepolia delayed inbox, scanned 2026-09-07).** The
+finding above predicts the escape hatch is essentially never used. A direct count of the
+delayed inbox says so on testnet already.
+
+*Range:* Ethereum Sepolia L1 blocks **≈11,536,664 – 11,656,664** (120,000 blocks, ≈17 days),
+Bridge `0x38f918D0E9F1b721EDaA41302E399fa1B79333a9`.
+
+| `MessageDelivered.kind` | Meaning | Count |
+|---|---|---|
+| 13 | `L1MessageType_batchPostingReport` (protocol-generated) | 19,251 |
+| 12 | `L1MessageType_ethDeposit` (bridging) | 4,816 |
+| 9 | `L1MessageType_submitRetryableTx` (bridging) | 1,550 |
+| **3** | **`L2_MSG` — `sendL2Message`, the escape-hatch path** | **0** |
+
+Every message in the delayed inbox over seventeen days was either protocol bookkeeping or
+ordinary bridging. Not one was a user submitting a signed L2 transaction through the escape
+hatch. This is the mechanism-usage claim of §18 measured directly rather than argued.
+
+*Method, and a trap worth documenting.* Classify by **`MessageDelivered.kind` on the
+Bridge**, not by the first byte of `InboxMessageDelivered.data`. The first attempt used the
+data byte and produced a plausible-looking distribution (`0x00` ×14, `0x9c` ×3, `0x40`,
+`0xda`, `0xb2`) with no `0x04` — which reads as "no signed-tx messages" but is an artifact:
+only `kind = 3` messages carry an `L2MessageType` byte first, while retryables and deposits
+begin with the high byte of a packed `uint256`, usually `0x00`. The byte-prefix method
+cannot distinguish "no escape-hatch messages" from "these are not escape-hatch messages at
+all", and would silently misclassify if any message happened to begin with `0x04`. `kind` is
+the field the protocol itself dispatches on.
+
+*Consequence for validation.* Because no `kind = 3` message exists on this testnet, the
+signed-transaction submission path **cannot be validated against historical chain data** —
+there is none to validate against. The two derivations it depends on were therefore
+confirmed separately against real data: `messageDataHash == keccak256(messageData)` on five
+live `MessageDelivered` events, and "an L2 transaction hash is `keccak256` of its signed
+serialization" on three live Arbitrum Sepolia transactions. The end-to-end path itself is
+first exercised by this harness's own submission.
+
 **What this paper must not become:** "we built a tool that measures L2 transactions." If the
 abstract's main verb is "we implemented," rewrite it.
 
