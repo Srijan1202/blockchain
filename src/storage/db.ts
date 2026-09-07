@@ -69,20 +69,29 @@ export function initDb(dbPath?: string): DatabaseHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Row types. Domain types (LifecycleStage, RunRecord, ...) belong to T5 in
-// core/types.ts; these are the storage-boundary shapes only, deliberately kept
-// local so T4 does not pre-empt T5.
+// Row types: the storage-boundary shapes (snake_case, uint256 as string).
+//
+// The domain unions now live in core/types.ts (T5) and are imported rather than
+// redeclared. Two copies of the stage or clock-source list is exactly how the
+// schema and the domain model drift apart, and the CHECK constraints would then
+// disagree with the type system about what a valid row is.
 // ---------------------------------------------------------------------------
 
+import type {
+  ChainLayer,
+  ClockSource,
+  Confidence,
+  LifecycleStage,
+  Outcome,
+  RunPath,
+  TxKind,
+} from "../core/types.js";
+
+export type { ChainLayer, ClockSource, Confidence, LifecycleStage, Outcome, RunPath, TxKind };
+
+/** Storage-only unions: these have no domain-model counterpart. */
 export type Environment = "devnet" | "testnet" | "mainnet";
 export type ExperimentType = "A" | "B" | "C" | "C_prime" | "D" | "E";
-export type RunPath = "normal" | "forced";
-export type TxKind = "eth_transfer" | "contract_call";
-export type Outcome = "pending" | "success" | "failed" | "timeout";
-export type Stage = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7" | "S8" | "S9";
-export type ChainLayer = "L1" | "L2";
-export type ClockSource = "wall" | "l1_block" | "l2_block";
-export type Confidence = "observed" | "inferred";
 export type MainnetClass = "A" | "B" | "C" | "D";
 
 /**
@@ -156,7 +165,7 @@ export interface RunRow {
 export interface LifecycleEventRow {
   event_id: string;
   run_id: string;
-  stage: Stage;
+  stage: LifecycleStage;
   chain_layer: ChainLayer;
   block_number?: number | null;
   block_timestamp?: number | null;
