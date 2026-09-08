@@ -661,6 +661,22 @@ escalate — this is the highest-risk component and everything else has a fallba
 **Wallet.** One dedicated experiment EOA per chain family, funded from Sepolia faucets and
 bridged. Fixed sender per cell (nonce ordering matters); never reuse a mainnet key.
 
+**Which network needs funding depends on the path, not the chain** (traced from the
+adapters in `src/core/preflight.ts`, and enforced before any submission):
+
+| Campaign | Funds required |
+|---|---|
+| A on `op-sepolia` / `arb-sepolia` | that L2 only — no L1 transaction exists on the normal path |
+| B on `op-sepolia` | Ethereum Sepolia only, **gas + `msg.value`** — the deposit's L2 gas is prepaid by burning L1 gas and its value is minted on L2 |
+| B on `arb-sepolia` | **both** — Ethereum Sepolia for `sendL2Message` gas (no value on the L1 call), and Arbitrum Sepolia for `value + gas` when the signed L2 transaction executes |
+| `base-sepolia` | none — the adapter refuses while its sequencing window is UNVERIFIED |
+
+The Arbitrum forced case is a measurement hazard, not just an operational one. An empty
+Arbitrum Sepolia balance produces a message that queues normally, reaches S4, and then
+fails on execution — **indistinguishable at a glance from sequencer non-inclusion**. An
+unfunded wallet would manufacture exactly the signal this study exists to measure, so the
+runner refuses to submit until both balances are present.
+
 **Procedure — Arbitrum Sepolia (Experiment B).**
 1. Construct and sign the L2 tx for chain 421614.
 2. `Inbox.sendL2Message` on Ethereum Sepolia at `0xaAe29B...5ae21`.

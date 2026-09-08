@@ -8,6 +8,7 @@ import { L2S, type L2Config } from "../config/chains.js";
 import { campaignId, experimentDef, type ExperimentDef } from "../config/experiments.js";
 import { childLogger, logger } from "../core/logger.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../core/params.js";
+import { assertSufficient, preflightBalances } from "../core/preflight.js";
 import { idempotencyKey } from "../core/retry.js";
 import type { CostRecord, SubmissionRef, TxSpec } from "../core/types.js";
 import { trackRun } from "../measurement/tracker.js";
@@ -254,6 +255,39 @@ async function main(): Promise<void> {
     const snap = await adapter.snapshotParams();
     const written = writeParamSnapshot(db, experimentId, snap);
     logger.info({ experiment_id: experimentId, params_written: written, errors: snap.errors.length }, "parameter snapshot taken");
+  }
+
+  // BALANCE PREFLIGHT - before any submission, and skipped under --dry-run,
+  // which uses a placeholder address by design.
+  //
+  // The requirement depends on the PATH, not just the chain: the forced path on
+  // Arbitrum needs Ethereum Sepolia for L1 gas AND Arbitrum Sepolia for the L2
+  // execution of the delayed message, while neither A campaign needs Ethereum
+  // Sepolia at all. See core/preflight.ts for the traced model.
+  if (!args.dryRun) {
+    const requirements = await preflightBalances({
+      path: def.path,
+      cfg,
+      tx: buildTxSpec(def, sender),
+      sender,
+      l1,
+      l2,
+      portal: cfg.l1Contracts.optimismPortal?.address ?? undefined,
+      inbox: cfg.l1Contracts.inbox?.address ?? undefined,
+    });
+    for (const r of requirements) {
+      logger.info(
+        {
+          network: r.network,
+          purpose: r.purpose,
+          have_wei: r.actualWei.toString(),
+          need_wei: r.requiredWei.toString(),
+          sufficient: r.sufficient,
+        },
+        "balance preflight",
+      );
+    }
+    assertSufficient(requirements);
   }
 
   let submitted = 0;
