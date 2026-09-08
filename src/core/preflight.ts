@@ -67,7 +67,11 @@ export interface BalanceRequirement {
   address: Address;
   /** What the funds are actually for, in the user's terms. */
   purpose: string;
-  /** Derived minimum before the margin. */
+  /** Derived minimum for a SINGLE submission, before the margin. */
+  perRunBaseWei: bigint;
+  /** How many submissions this campaign will actually make. */
+  runs: number;
+  /** perRunBaseWei x runs. The campaign total before the margin. */
   baseRequiredWei: bigint;
   marginBps: bigint;
   /** baseRequired plus the margin. This is what is enforced. */
@@ -143,10 +147,50 @@ export interface PreflightInput {
   sender: Address;
   l1: PublicClient;
   l2: PublicClient;
+  /**
+   * How many submissions this invocation will actually make.
+   *
+   * A campaign submits n transactions, so checking for one is not a preflight -
+   * it lets --n 25 start with funds for a single run and die mid-campaign,
+   * leaving a partial sample that has to be discarded. This is n MINUS the
+   * indices already claimed via hasAlreadySubmitted, so a resumed campaign does
+   * not demand funds for work that is already done.
+   */
+  runs: number;
   /** Portal address, for the OP forced path. */
   portal?: Address;
   /** Delayed inbox address, for the Arbitrum forced path. */
   inbox?: Address;
+}
+
+/** Build a requirement, scaling the per-run minimum to the whole campaign. */
+function requirement(args: {
+  network: string;
+  rpcEnv: string;
+  address: Address;
+  purpose: string;
+  perRunBaseWei: bigint;
+  runs: number;
+  actualWei: bigint;
+  gasBasis: string;
+}): BalanceRequirement {
+  const base = args.perRunBaseWei * BigInt(args.runs);
+  const required = withMargin(base);
+  return {
+    network: args.network,
+    chainKey: args.network,
+    rpcEnv: args.rpcEnv,
+    address: args.address,
+    purpose: args.purpose,
+    perRunBaseWei: args.perRunBaseWei,
+    runs: args.runs,
+    baseRequiredWei: base,
+    marginBps: PREFLIGHT_MARGIN_BPS,
+    requiredWei: required,
+    actualWei: args.actualWei,
+    sufficient: args.actualWei >= required,
+    gasBasis: args.gasBasis,
+  };
 }
 
 /**
@@ -156,7 +200,8 @@ export interface PreflightInput {
  * fee data. Nothing here is a hardcoded requirement.
  */
 export async function preflightBalances(input: PreflightInput): Promise<BalanceRequirement[]> {
-  const { path, cfg, tx, sender, l1, l2 } = input;
+  const { path, cfg, tx, sender, l1, l2, runs } = input;
+  if (!Number.isInteger(runs) || runs < 0) throw new Error(`preflight: runs must be a non-negative integer, got ${runs}`);
   const out: BalanceRequirement[] = [];
 
   const l2Balance = async () => l2.getBalance({ address: sender });
@@ -165,22 +210,16 @@ export async function preflightBalances(input: PreflightInput): Promise<BalanceR
   if (path === "normal") {
     // Normal path: one L2 transaction, nothing on L1.
     const { fee, basis } = await maxFeePerGas(l2);
-    const base = tx.valueWei + tx.gasLimit * fee;
-    const required = withMargin(base);
-    const actual = await l2Balance();
-    out.push({
+    out.push(requirement({
       network: cfg.key,
-      chainKey: cfg.key,
       rpcEnv: cfg.rpcEnv,
       address: sender,
       purpose: "L2 transaction via the sequencer RPC: value + gas. No L1 transaction exists on the normal path.",
-      baseRequiredWei: base,
-      marginBps: PREFLIGHT_MARGIN_BPS,
-      requiredWei: required,
-      actualWei: actual,
-      sufficient: actual >= required,
+      perRunBaseWei: tx.valueWei + tx.gasLimit * fee,
+      runs,
+      actualWei: await l2Balance(),
       gasBasis: `${tx.gasLimit} gas x maxFeePerGas (${basis})`,
-    });
+    }));
     return out;
   }
 
@@ -198,24 +237,18 @@ export async function preflightBalances(input: PreflightInput): Promise<BalanceR
     const { gas, basis } = await estimateL1Gas(
       l1, sender, { to: portal, data, value: tx.valueWei }, NOMINAL_L1_GAS_DEPOSIT, "depositTransaction",
     );
-    const base = tx.valueWei + gas * l1Fee.fee;
-    const required = withMargin(base);
-    const actual = await l1Balance();
-    out.push({
+    out.push(requirement({
       network: ETH_SEPOLIA.key,
-      chainKey: ETH_SEPOLIA.key,
       rpcEnv: ETH_SEPOLIA.rpcEnv,
       address: sender,
       purpose:
         "L1 OptimismPortal.depositTransaction: gas + msg.value. The msg.value is minted on L2 and the " +
         "deposit's L2 gas is prepaid by burning L1 gas, so NO OP Sepolia balance is required.",
-      baseRequiredWei: base,
-      marginBps: PREFLIGHT_MARGIN_BPS,
-      requiredWei: required,
-      actualWei: actual,
-      sufficient: actual >= required,
+      perRunBaseWei: tx.valueWei + gas * l1Fee.fee,
+      runs,
+      actualWei: await l1Balance(),
       gasBasis: `${gas} gas x maxFeePerGas (${basis}; fee ${l1Fee.basis}) + msg.value ${tx.valueWei}`,
-    });
+    }));
     return out;
   }
 
@@ -228,45 +261,33 @@ export async function preflightBalances(input: PreflightInput): Promise<BalanceR
     const { gas, basis } = await estimateL1Gas(
       l1, sender, { to: inbox, data, value: 0n }, NOMINAL_L1_GAS_SEND_L2_MESSAGE, "sendL2Message",
     );
-    const baseL1 = gas * l1Fee.fee;
-    const requiredL1 = withMargin(baseL1);
-    const actualL1 = await l1Balance();
-    out.push({
+    out.push(requirement({
       network: ETH_SEPOLIA.key,
-      chainKey: ETH_SEPOLIA.key,
       rpcEnv: ETH_SEPOLIA.rpcEnv,
       address: sender,
       purpose: "L1 Inbox.sendL2Message: gas only. The L1 call carries no value.",
-      baseRequiredWei: baseL1,
-      marginBps: PREFLIGHT_MARGIN_BPS,
-      requiredWei: requiredL1,
-      actualWei: actualL1,
-      sufficient: actualL1 >= requiredL1,
+      perRunBaseWei: gas * l1Fee.fee,
+      runs,
+      actualWei: await l1Balance(),
       gasBasis: `${gas} gas x maxFeePerGas (${basis}; fee ${l1Fee.basis})`,
-    });
+    }));
 
     // Leg 2 - L2: the signed transaction inside the delayed message executes on
     // Arbitrum and pays from the sender's L2 balance. This is the leg that is
     // easy to forget and that fails as a false censorship signal.
     const l2Fee = await maxFeePerGas(l2);
-    const baseL2 = tx.valueWei + tx.gasLimit * l2Fee.fee;
-    const requiredL2 = withMargin(baseL2);
-    const actualL2 = await l2Balance();
-    out.push({
+    out.push(requirement({
       network: cfg.key,
-      chainKey: cfg.key,
       rpcEnv: cfg.rpcEnv,
       address: sender,
       purpose:
         "L2 execution of the delayed message: value + gas, paid from the Arbitrum Sepolia balance. " +
         "Without it the message queues, reaches S4, then fails on execution - which looks like sequencer non-inclusion.",
-      baseRequiredWei: baseL2,
-      marginBps: PREFLIGHT_MARGIN_BPS,
-      requiredWei: requiredL2,
-      actualWei: actualL2,
-      sufficient: actualL2 >= requiredL2,
+      perRunBaseWei: tx.valueWei + tx.gasLimit * l2Fee.fee,
+      runs,
+      actualWei: await l2Balance(),
       gasBasis: `${tx.gasLimit} gas x maxFeePerGas (${l2Fee.basis}) + value ${tx.valueWei}`,
-    });
+    }));
     return out;
   }
 
@@ -280,8 +301,9 @@ export function formatRequirement(r: BalanceRequirement): string {
     `         address   ${r.address}`,
     `         purpose   ${r.purpose}`,
     `         have      ${formatEther(r.actualWei)} ETH  (${r.actualWei} wei)`,
-    `         need      ${formatEther(r.requiredWei)} ETH  (${r.requiredWei} wei)`,
-    `         derived   ${formatEther(r.baseRequiredWei)} ETH + ${Number(r.marginBps) / 100}% margin`,
+    `         need      ${formatEther(r.requiredWei)} ETH  (${r.requiredWei} wei)  <- campaign total, enforced`,
+    `         per run   ${formatEther(r.perRunBaseWei)} ETH  x ${r.runs} run(s) = ${formatEther(r.baseRequiredWei)} ETH derived`,
+    `         margin    +${Number(r.marginBps) / 100}% on the derived total`,
     `         basis     ${r.gasBasis}`,
     r.sufficient ? "" : `         SHORTFALL ${formatEther(short)} ETH  (${short} wei)`,
   ].filter(Boolean).join("\n");
