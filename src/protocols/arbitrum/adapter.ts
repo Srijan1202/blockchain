@@ -109,6 +109,75 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     this.stageTimeoutMs = opts.stageTimeoutMs ?? 30 * 60_000;
   }
 
+  /**
+   * Campaign-scoped L2 nonce, per sender address.
+   *
+   * getTransactionCount defaults to blockTag 'latest', the MINED nonce. A
+   * delayed-inbox message waits for the sequencer to read it - about ten
+   * minutes on a healthy chain - so during a campaign the mined nonce does not
+   * advance between submissions and runs 2..N would all sign with the same
+   * nonce. One would execute; the rest would cost real L1 gas and never appear
+   * on L2, showing up as S4 present with S7 absent, which reads exactly like a
+   * sequencer failing to include them. That would be a fabricated censorship
+   * signal.
+   *
+   * blockTag 'pending' does NOT help: the transaction is not in any L2 mempool,
+   * it is sitting in an L1 inbox that the L2 node has no view of.
+   *
+   * So the nonce is read from chain once per address and then incremented
+   * locally per submission. Allocation is synchronous after initialisation -
+   * there is no await between reading `next` and writing it back - so two
+   * concurrent runs cannot be handed the same value, the same reasoning as the
+   * per-run state above.
+   */
+  private readonly nonceState = new Map<Address, { next: bigint }>();
+  private readonly nonceInit = new Map<Address, Promise<void>>();
+
+  private async allocateNonce(address: Address, l2: PublicClient | null): Promise<number> {
+    let init = this.nonceInit.get(address);
+    if (!init) {
+      init = (async () => {
+        // A dry run must not touch the network, so it starts from zero. That
+        // still increments per submission, so dry-run hashes differ per run.
+        const start = l2 === null ? 0 : await l2.getTransactionCount({ address });
+        this.nonceState.set(address, { next: BigInt(start) });
+      })();
+      this.nonceInit.set(address, init);
+    }
+    await init;
+
+    const state = this.nonceState.get(address);
+    if (!state) throw new Error(`nonce state missing for ${address} after initialisation`);
+    const allocated = state.next;
+    state.next = allocated + 1n; // synchronous: no await between read and write
+    return Number(allocated);
+  }
+
+  /** The next nonce this adapter would allocate, or null if uninitialised. */
+  peekNonce(address: Address): number | null {
+    const state = this.nonceState.get(address);
+    return state ? Number(state.next) : null;
+  }
+
+  /**
+   * Reconcile the local nonce against chain once a run completes.
+   *
+   * Takes the HIGHER of the two. Chain may have advanced past us if something
+   * else sent from this address; we may be ahead of chain because our messages
+   * are still queued in the L1 inbox and unmined on L2. Going backwards would
+   * reissue a nonce and strand a queued message.
+   */
+  async reconcileNonce(address: Address): Promise<number> {
+    const onchain = BigInt(await this.l2().getTransactionCount({ address }));
+    const state = this.nonceState.get(address);
+    if (!state) {
+      this.nonceState.set(address, { next: onchain });
+      return Number(onchain);
+    }
+    state.next = state.next > onchain ? state.next : onchain;
+    return Number(state.next);
+  }
+
   private stateFor(runId: string) {
     let state = this.runState.get(runId);
     if (!state) {
@@ -189,12 +258,9 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     const account = ctx.dryRun ? dryRunAccount() : this.account();
     const l2 = this.l2();
 
-    // DRY-RUN ARTIFACT: with a fixed throwaway key and nonce 0, every dry run
-    // signs an identical transaction and therefore reports the same l2_tx_hash.
-    // That is expected and harmless - nothing is sent - but dry-run rows must
-    // not be read as distinct transactions. A real run reads the nonce from
-    // chain, so hashes differ per run.
-    const nonce = ctx.dryRun ? 0 : await l2.getTransactionCount({ address: account.address });
+    // Nonce comes from the campaign-scoped allocator, NOT from a fresh
+    // getTransactionCount per submission. See allocateNonce for why.
+    const nonce = await this.allocateNonce(account.address, ctx.dryRun ? null : l2);
     const fees = ctx.dryRun
       ? { maxFeePerGas: 100_000_000n, maxPriorityFeePerGas: 0n }
       : await l2.estimateFeesPerGas();
