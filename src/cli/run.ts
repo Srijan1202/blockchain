@@ -23,9 +23,10 @@ import {
   insertRun,
   setExperimentEnded,
   setRunSubmission,
+  upsertCosts,
   type ParamSource,
 } from "../storage/db.js";
-import { u256OrNull } from "../storage/encode.js";
+import { toCostRow, u256OrNull } from "../storage/encode.js";
 
 /**
  * Experiment campaign runner (T11).
@@ -137,10 +138,16 @@ async function collectCosts(
     forceGasUsed: null, forceFeeWei: null,
     l2GasUsed: null, l2FeeWei: null, totalFeeWei: null, l1BaseFeeAtSubmit: null,
   };
+  // A leg is "expected" when the submission produced a hash for it. Tracking
+  // may have timed out with some legs mined and others not; partial costs are
+  // legitimate data and are recorded, but the TOTAL is only meaningful when
+  // every expected leg was actually observed.
+  let expected = 0;
+  let observed = 0;
   let total = 0n;
-  let observed = false;
 
   if (ref.l1TxHash !== null) {
+    expected++;
     try {
       const r = await l1.getTransactionReceipt({ hash: ref.l1TxHash });
       costs.l1GasUsed = r.gasUsed;
@@ -149,29 +156,37 @@ async function collectCosts(
       total += costs.l1FeeWei;
       const block = await l1.getBlock({ blockNumber: r.blockNumber });
       costs.l1BaseFeeAtSubmit = block.baseFeePerGas ?? null;
-      observed = true;
+      observed++;
     } catch { /* not mined; leave null rather than guess */ }
   }
   if (ref.l1ForceHash !== null) {
+    expected++;
     try {
       const r = await l1.getTransactionReceipt({ hash: ref.l1ForceHash });
       costs.forceGasUsed = r.gasUsed;
       costs.forceFeeWei = r.gasUsed * r.effectiveGasPrice;
       total += costs.forceFeeWei;
-      observed = true;
+      observed++;
     } catch { /* not mined */ }
   }
   if (ref.l2TxHash !== null) {
+    expected++;
     try {
       const r = await l2.getTransactionReceipt({ hash: ref.l2TxHash });
       costs.l2GasUsed = r.gasUsed;
       costs.l2FeeWei = r.gasUsed * r.effectiveGasPrice;
       total += costs.l2FeeWei;
-      observed = true;
+      observed++;
     } catch { /* not included */ }
   }
-  if (!observed) return undefined;
-  costs.totalFeeWei = total;
+
+  // No receipt anywhere: nothing was observed, so no row (see the write site).
+  if (observed === 0) return undefined;
+
+  // Withhold the total on a partial observation rather than reporting a sum
+  // that silently omits a leg - M-C4 would be understated and look like a
+  // cheaper forced path than it was.
+  costs.totalFeeWei = observed === expected ? total : null;
   return costs;
 }
 
@@ -289,8 +304,28 @@ async function main(): Promise<void> {
     setRunSubmission(db, runId, { l1TxHash: ref.l1TxHash, l1ForceHash: ref.l1ForceHash, l2TxHash: ref.l2TxHash });
     submitted++;
 
-    const costs = args.dryRun ? undefined : await collectCosts(runId, ref, l1, l2);
-    const result = await trackRun(db, adapter, ref, ctx, { costs });
+    // Track FIRST, then collect costs.
+    //
+    // sendTransaction resolves as soon as eth_sendRawTransaction responds - it
+    // does not wait for a receipt - so collecting costs here would call
+    // getTransactionReceipt on a hash that has only just been broadcast, get
+    // TransactionReceiptNotFoundError for every leg, and silently write no
+    // costs row while the campaign reported success. Every cost metric would
+    // have been empty. The receipts exist once trackRun has followed the
+    // lifecycle through to L2 execution.
+    const result = await trackRun(db, adapter, ref, ctx, {});
+
+    if (!args.dryRun) {
+      const costs = await collectCosts(runId, ref, l1, l2);
+      if (costs) {
+        upsertCosts(db, toCostRow(costs));
+      } else {
+        // No receipt for any leg. Absence of observation must not wear the
+        // shape of an observation, so no row is written (same principle as
+        // param_snapshots refusing a sourceless value).
+        log.warn({ outcome: result.outcome }, "no receipts available - writing no costs row");
+      }
+    }
     log.info(
       {
         experiment_id: experimentId,
@@ -302,7 +337,15 @@ async function main(): Promise<void> {
       "run complete",
     );
 
-    if (adapter instanceof ArbitrumAdapter) adapter.releaseRun(runId);
+    if (adapter instanceof ArbitrumAdapter) {
+      adapter.releaseRun(runId);
+      // Pick up any advance made outside this campaign, without ever moving the
+      // local nonce backwards past messages still queued in the L1 inbox.
+      if (!args.dryRun) {
+        const next = await adapter.reconcileNonce(sender);
+        log.info({ next_nonce: next }, "reconciled campaign nonce against chain");
+      }
+    }
   }
 
   setExperimentEnded(db, experimentId, new Date().toISOString());
