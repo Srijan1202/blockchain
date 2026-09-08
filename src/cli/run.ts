@@ -8,7 +8,7 @@ import { L2S, type L2Config } from "../config/chains.js";
 import { campaignId, experimentDef, type ExperimentDef } from "../config/experiments.js";
 import { childLogger, logger } from "../core/logger.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../core/params.js";
-import { assertSufficient, preflightBalances } from "../core/preflight.js";
+import { assertSufficient, formatRequirement, preflightBalances } from "../core/preflight.js";
 import { idempotencyKey } from "../core/retry.js";
 import type { CostRecord, SubmissionRef, TxSpec } from "../core/types.js";
 import { trackRun } from "../measurement/tracker.js";
@@ -46,6 +46,7 @@ interface Args {
   chain: string;
   n: number;
   dryRun: boolean;
+  checkOnly: boolean;
   suffix?: string;
 }
 
@@ -58,11 +59,19 @@ function parseArgs(argv: string[]): Args {
   const chain = get("--chain");
   const nRaw = get("--n");
   if (!experiment || !chain) {
-    throw new Error("usage: npm run run -- --experiment B --chain op-sepolia --n 25 [--dry-run] [--campaign-suffix S]");
+    throw new Error("usage: npm run run -- --experiment B --chain op-sepolia --n 25 [--dry-run | --check-only] [--campaign-suffix S]");
   }
   const n = nRaw === undefined ? 1 : Number(nRaw);
   if (!Number.isInteger(n) || n < 1) throw new Error(`--n must be a positive integer, got ${nRaw}`);
-  return { experiment, chain, n, dryRun: argv.includes("--dry-run"), suffix: get("--campaign-suffix") };
+  const dryRun = argv.includes("--dry-run");
+  const checkOnly = argv.includes("--check-only");
+  if (dryRun && checkOnly) {
+    throw new Error(
+      "--dry-run and --check-only are contradictory: --dry-run uses a placeholder address, " +
+        "--check-only checks the real wallet. Pass one.",
+    );
+  }
+  return { experiment, chain, n, dryRun, checkOnly, suffix: get("--campaign-suffix") };
 }
 
 /** The commit the data was produced by. Reproducibility is a deliverable. */
@@ -229,14 +238,83 @@ async function main(): Promise<void> {
   const experimentId = campaignId(args.experiment, args.chain, args.suffix);
   const db = initDb();
   const adapter = buildAdapter(cfg);
-  const sender = senderAddress(args.dryRun);
+  const sender = senderAddress(args.dryRun && !args.checkOnly);
   const l1 = l1Client();
   const l2 = l2Client(cfg);
 
   logger.info(
-    { experiment_id: experimentId, chain: args.chain, n: args.n, dry_run: args.dryRun, path: def.path },
-    args.dryRun ? "starting campaign (DRY RUN - nothing will be sent)" : "starting campaign",
+    { experiment_id: experimentId, chain: args.chain, n: args.n, dry_run: args.dryRun, check_only: args.checkOnly, path: def.path },
+    args.checkOnly
+      ? "balance check only - nothing will be created or sent"
+      : args.dryRun
+        ? "starting campaign (DRY RUN - nothing will be sent)"
+        : "starting campaign",
   );
+
+  // Which indices this invocation would actually submit. Computed BEFORE the
+  // preflight so a resumed campaign is not asked to fund work already done, and
+  // before any state is created so --check-only can use it too.
+  const pendingIndices: number[] = [];
+  for (let i = 0; i < args.n; i++) {
+    if (!hasAlreadySubmitted(db, idempotencyKey(experimentId, i, def.path, args.chain))) {
+      pendingIndices.push(i);
+    }
+  }
+  logger.info(
+    { experiment_id: experimentId, requested: args.n, pending: pendingIndices.length, already_submitted: args.n - pendingIndices.length },
+    "campaign scope",
+  );
+
+  // BALANCE PREFLIGHT - before any submission, scaled to the whole campaign.
+  //
+  // Skipped under --dry-run, which uses a placeholder address by design.
+  // --check-only forces it and then stops, without creating an experiment row,
+  // claiming an idempotency key, or sending anything.
+  if (!args.dryRun || args.checkOnly) {
+    const requirements = await preflightBalances({
+      path: def.path,
+      cfg,
+      tx: buildTxSpec(def, sender),
+      sender,
+      l1,
+      l2,
+      runs: pendingIndices.length,
+      portal: cfg.l1Contracts.optimismPortal?.address ?? undefined,
+      inbox: cfg.l1Contracts.inbox?.address ?? undefined,
+    });
+
+    if (args.checkOnly) {
+      console.log(`\n=== BALANCE PREFLIGHT: ${experimentId} ===`);
+      console.log(`  campaign  ${def.name} (${def.path} path)`);
+      console.log(`  runs      ${pendingIndices.length} pending of ${args.n} requested\n`);
+      for (const r of requirements) console.log(formatRequirement(r));
+      const short = requirements.filter((r) => !r.sufficient);
+      console.log(
+        short.length === 0
+          ? `\nREADY. Nothing was created or submitted.\n`
+          : `\nNOT READY: ${short.length} network(s) short. Nothing was created or submitted.\n`,
+      );
+      db.close();
+      process.exitCode = short.length === 0 ? 0 : 1;
+      return;
+    }
+
+    for (const r of requirements) {
+      logger.info(
+        {
+          network: r.network,
+          purpose: r.purpose,
+          runs: r.runs,
+          per_run_wei: r.perRunBaseWei.toString(),
+          have_wei: r.actualWei.toString(),
+          need_wei: r.requiredWei.toString(),
+          sufficient: r.sufficient,
+        },
+        "balance preflight",
+      );
+    }
+    assertSufficient(requirements);
+  }
 
   if (experimentExists(db, experimentId)) {
     logger.info({ experiment_id: experimentId }, "campaign already exists - resuming, not restarting");
@@ -255,39 +333,6 @@ async function main(): Promise<void> {
     const snap = await adapter.snapshotParams();
     const written = writeParamSnapshot(db, experimentId, snap);
     logger.info({ experiment_id: experimentId, params_written: written, errors: snap.errors.length }, "parameter snapshot taken");
-  }
-
-  // BALANCE PREFLIGHT - before any submission, and skipped under --dry-run,
-  // which uses a placeholder address by design.
-  //
-  // The requirement depends on the PATH, not just the chain: the forced path on
-  // Arbitrum needs Ethereum Sepolia for L1 gas AND Arbitrum Sepolia for the L2
-  // execution of the delayed message, while neither A campaign needs Ethereum
-  // Sepolia at all. See core/preflight.ts for the traced model.
-  if (!args.dryRun) {
-    const requirements = await preflightBalances({
-      path: def.path,
-      cfg,
-      tx: buildTxSpec(def, sender),
-      sender,
-      l1,
-      l2,
-      portal: cfg.l1Contracts.optimismPortal?.address ?? undefined,
-      inbox: cfg.l1Contracts.inbox?.address ?? undefined,
-    });
-    for (const r of requirements) {
-      logger.info(
-        {
-          network: r.network,
-          purpose: r.purpose,
-          have_wei: r.actualWei.toString(),
-          need_wei: r.requiredWei.toString(),
-          sufficient: r.sufficient,
-        },
-        "balance preflight",
-      );
-    }
-    assertSufficient(requirements);
   }
 
   let submitted = 0;
