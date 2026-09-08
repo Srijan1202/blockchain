@@ -12,8 +12,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { assertNotWellKnownTestKey } from "../../core/keyguard.js";
 import { L2S, type L2Config } from "../../config/chains.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../../core/params.js";
-import type { LifecycleEvent, SubmissionRef, TxSpec } from "../../core/types.js";
-import { ARBITRUM_SUPPORTED_STAGES, type ProtocolAdapter, type RunContext } from "../adapter.js";
+import type { LifecycleEvent, LifecycleStage, RunPath, SubmissionRef, TxSpec } from "../../core/types.js";
+import { ARBITRUM_SUPPORTED_STAGES, NORMAL_PATH_STAGES, type ProtocolAdapter, type RunContext } from "../adapter.js";
 import { BRIDGE_ABI, INBOX_ABI, MESSAGE_KIND, SEQUENCER_INBOX_ABI } from "./abi.js";
 import {
   assessForceReachability,
@@ -214,6 +214,14 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     this.runState.delete(runId);
   }
 
+  /**
+   * Stages applicable to this path. See ProtocolAdapter.stagesForPath.
+   * The normal path has no L1 legs, so S3-S6 do not apply to it.
+   */
+  stagesForPath(path: RunPath): ReadonlySet<LifecycleStage> {
+    return path === "normal" ? NORMAL_PATH_STAGES : this.supportedStages;
+  }
+
   private l1(): PublicClient {
     return l1Client();
   }
@@ -239,16 +247,19 @@ export class ArbitrumAdapter implements ProtocolAdapter {
 
   /** Baseline path: an ordinary transaction through the sequencer RPC. */
   async submitNormal(tx: TxSpec, ctx: RunContext): Promise<SubmissionRef> {
-    const submittedAt = new Date().toISOString();
+    // S1: see the note in the OP Stack adapter - on the normal path viem signs
+    // inside sendTransaction, so S1 and S2 coincide.
+    const generatedAt = new Date().toISOString();
+    const submittedAt = generatedAt;
     if (ctx.dryRun) {
       ctx.logger.info({ chain: this.chainKey, path: "normal" }, "dry run: normal tx not sent");
-      return makeRef(ctx, "normal", submittedAt, {});
+      return makeRef(ctx, "normal", generatedAt, submittedAt, {});
     }
     const wallet = createWalletClient({ account: this.account(), transport: http(rpcFor(this.cfg.rpcEnv)) });
     const hash = await wallet.sendTransaction({
       to: tx.to, value: tx.valueWei, data: tx.data, gas: tx.gasLimit, chain: null,
     });
-    return makeRef(ctx, "normal", submittedAt, { l2TxHash: hash });
+    return makeRef(ctx, "normal", generatedAt, submittedAt, { l2TxHash: hash });
   }
 
   /**
@@ -285,7 +296,10 @@ export class ArbitrumAdapter implements ProtocolAdapter {
 
     const messageData = wrapSignedL2Message(signedTx);
     const l2TxHash = l2TxHashOf(signedTx);
-    const submittedAt = new Date().toISOString(); // S2, wall clock
+    // S1 is genuinely distinct on this path: the L2 transaction is signed here,
+    // before the separate L1 submission below. This is the one place the
+    // generated/submitted gap is real rather than incidental.
+    const generatedAt = new Date().toISOString();
 
     const calldata = encodeFunctionData({
       abi: INBOX_ABI,
@@ -306,16 +320,19 @@ export class ArbitrumAdapter implements ProtocolAdapter {
         },
         "dry run: sendL2Message constructed, not sent",
       );
-      return makeRef(ctx, "forced", submittedAt, { l2TxHash });
+      return makeRef(ctx, "forced", generatedAt, new Date().toISOString(), { l2TxHash });
     }
 
     const wallet = createWalletClient({ account: this.account(), transport: http(rpcFor("RPC_ETH_SEPOLIA")) });
+    // S2 is taken at the L1 handover, not at signing: on this path the two are
+    // genuinely separated by the RPC round trip.
+    const submittedAt = new Date().toISOString();
     const hash = await wallet.sendTransaction({ to: this.inbox, data: calldata, chain: null });
     ctx.logger.info(
       { chain: this.chainKey, path: "forced", l1_tx_hash: hash, l2_tx_hash: l2TxHash },
       "sendL2Message submitted to the delayed inbox",
     );
-    return makeRef(ctx, "forced", submittedAt, { l1TxHash: hash, l2TxHash });
+    return makeRef(ctx, "forced", generatedAt, submittedAt, { l1TxHash: hash, l2TxHash });
   }
 
   /**
@@ -423,13 +440,41 @@ export class ArbitrumAdapter implements ProtocolAdapter {
    * recovery would be wrong (I4).
    */
   async *track(submission: SubmissionRef, ctx: RunContext): AsyncIterable<LifecycleEvent> {
-    yield makeEvent(ctx, "S2", "L1", "wall", "observed", {
+    yield makeEvent(ctx, "S1", "L2", "wall", "observed", {
+      blockTimestamp: BigInt(Math.floor(Date.parse(submission.generatedAt) / 1000)),
+      observedAt: submission.generatedAt,
+    });
+    // S2's layer follows the path: the forced path hands the transaction to L1,
+    // the normal path hands it to the L2 sequencer RPC. Recording L1 for both
+    // would misattribute where a normal-path submission actually went.
+    yield makeEvent(ctx, "S2", submission.path === "normal" ? "L2" : "L1", "wall", "observed", {
       blockTimestamp: BigInt(Math.floor(Date.parse(submission.submittedAt) / 1000)),
       observedAt: submission.submittedAt,
     });
 
+    // Branch on the PATH, never on which hash happens to be null. The normal
+    // path legitimately has no L1 hash - it goes straight to the sequencer RPC -
+    // so inferring "dry run" from a null l1TxHash silently truncated every real
+    // Experiment A run at S2, and returned fast enough that cost collection ran
+    // before any receipt existed.
+    if (ctx.dryRun) {
+      ctx.logger.info(
+        { chain: this.chainKey, path: submission.path },
+        "dry run: nothing was sent, so no on-chain stage can be observed - stopping after S2",
+      );
+      return;
+    }
+
+    if (submission.path === "normal") {
+      yield* this.trackNormal(submission, ctx);
+      return;
+    }
+
     if (submission.l1TxHash === null) {
-      ctx.logger.info({ chain: this.chainKey }, "track: no L1 hash (dry run) - stopping after S2");
+      ctx.logger.error(
+        { chain: this.chainKey, run_id: submission.runId },
+        "forced path with no L1 hash - cannot track; recording nothing rather than guessing",
+      );
       return;
     }
 
@@ -565,6 +610,45 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     return null;
   }
 
+
+  /**
+   * Normal-path lifecycle: S7 (L2 appearance) and S8 (L2 execution).
+   *
+   * There are no S3-S6 stages here - the transaction never touches L1 on the
+   * way in - and S9 is not reported: see NORMAL_PATH_STAGES for why observing
+   * L1 finality of a sequenced transaction would mean following the batch that
+   * carries it, which is a different measurement.
+   *
+   * This deliberately does not return until the L2 receipt exists (or the stage
+   * times out), because the runner collects costs after tracking and a receipt
+   * that has not landed yet yields no costs at all.
+   */
+  private async *trackNormal(submission: SubmissionRef, ctx: RunContext): AsyncIterable<LifecycleEvent> {
+    if (submission.l2TxHash === null) {
+      ctx.logger.error(
+        { chain: this.chainKey, run_id: submission.runId },
+        "normal path with no L2 hash - nothing to track",
+      );
+      return;
+    }
+    const l2 = this.l2();
+    const appeared = await this.waitForL2Tx(l2, submission.l2TxHash, ctx);
+    if (!appeared) return;
+
+    yield makeEvent(ctx, "S7", "L2", "l2_block", "observed", {
+      blockNumber: appeared.blockNumber,
+      blockTimestamp: appeared.timestamp,
+      rawRef: submission.l2TxHash,
+    });
+
+    const receipt = await l2.getTransactionReceipt({ hash: submission.l2TxHash });
+    yield makeEvent(ctx, "S8", "L2", "l2_block", "observed", {
+      blockNumber: receipt.blockNumber,
+      blockTimestamp: appeared.timestamp,
+      rawRef: `${submission.l2TxHash}#receipt:${receipt.status}`,
+    });
+  }
+
   private async waitForL1Receipt(l1: PublicClient, hash: Hex, ctx: RunContext): Promise<TransactionReceipt | null> {
     const deadline = Date.now() + this.stageTimeoutMs;
     while (Date.now() < deadline) {
@@ -647,6 +731,7 @@ function rpcFor(envKey: string): string {
 function makeRef(
   ctx: RunContext,
   path: "normal" | "forced",
+  generatedAt: string,
   submittedAt: string,
   hashes: { l1TxHash?: Hex; l2TxHash?: Hex },
 ): SubmissionRef {
@@ -657,6 +742,7 @@ function makeRef(
     l1TxHash: hashes.l1TxHash ?? null,
     l1ForceHash: null,
     l2TxHash: hashes.l2TxHash ?? null,
+    generatedAt,
     submittedAt,
   };
 }

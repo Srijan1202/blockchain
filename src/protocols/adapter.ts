@@ -8,6 +8,7 @@ import type {
   Environment,
   LifecycleEvent,
   LifecycleStage,
+  RunPath,
   SubmissionRef,
   TxSpec,
 } from "../core/types.js";
@@ -104,6 +105,31 @@ function stagesOf(map: StageMap): ReadonlySet<LifecycleStage> {
 export const ARBITRUM_SUPPORTED_STAGES = stagesOf(ARBITRUM_STAGES);
 export const OPSTACK_SUPPORTED_STAGES = stagesOf(OPSTACK_STAGES);
 
+/**
+ * Stages applicable to the NORMAL path, for either protocol.
+ *
+ * The normal path submits straight to the sequencer RPC, so S3 (L1 inclusion of
+ * the submission), S4 (protocol queue entry), S5 and S6 do not exist on it -
+ * there is no L1 transaction to observe. Only generation, submission, and the
+ * two L2 stages apply.
+ *
+ * S9 (L1 finality) is DELIBERATELY ABSENT and this is a decision, not an
+ * oversight. A normal-path transaction does reach L1 eventually, inside a
+ * sequencer batch, but observing that means identifying and following the batch
+ * that carries it - SequencerBatchDelivered on Arbitrum, the batcher's blob
+ * submission on the OP Stack. That is a different measurement, it is not
+ * required by any metric in BLUEPRINT section 9, and M-L4 (normal-path latency)
+ * is S1 -> S8. Claiming S9 here without doing that work would be fabricating a
+ * stage; omitting it silently would make it ambiguous. So it is excluded from
+ * the path set, which makes "no S9 row on a normal run" read as NOT APPLICABLE.
+ */
+export const NORMAL_PATH_STAGES: ReadonlySet<LifecycleStage> = new Set<LifecycleStage>([
+  "S1",
+  "S2",
+  "S7",
+  "S8",
+]);
+
 export interface ProtocolAdapter {
   readonly chainKey: string;
   readonly family: ProtocolFamily;
@@ -158,4 +184,25 @@ export interface ProtocolAdapter {
    * to the adapter.
    */
   readonly supportedStages: ReadonlySet<LifecycleStage>;
+
+  /**
+   * Stages applicable to one PATH of this protocol.
+   *
+   * DECISION - supportedStages stays protocol-level, and this is added
+   * alongside it rather than replacing it. Together they give a three-way
+   * reading of an absent row, where two of the three were previously
+   * indistinguishable:
+   *
+   *   stage not in supportedStages        -> the PROTOCOL has no such stage
+   *                                          (OP Stack S5/S6: not applicable)
+   *   in supportedStages, not in this set -> the protocol has it, but this PATH
+   *                                          does not use it (S3/S4 on the
+   *                                          normal path: not applicable here)
+   *   in this set, but no row             -> applicable and NOT OBSERVED
+   *
+   * Collapsing the first two would reintroduce exactly the ambiguity T7 removed
+   * for S5/S6, one level down. The tracker reports stagesMissing against this
+   * set, so "missing" always means the third case.
+   */
+  stagesForPath(path: RunPath): ReadonlySet<LifecycleStage>;
 }
