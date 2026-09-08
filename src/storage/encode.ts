@@ -122,5 +122,9 @@ export function toCostRow(cost: CostRecord): CostRow {
     l2_fee_wei: u256OrNull(cost.l2FeeWei),
     total_fee_wei: u256OrNull(cost.totalFeeWei),
     l1_base_fee_at_submit: u256OrNull(cost.l1BaseFeeAtSubmit),
+    op_l1_data_fee_wei: u256OrNull(cost.opL1DataFeeWei),
+    op_l1_gas_used: u256OrNull(cost.opL1GasUsed),
+    op_l1_gas_price: u256OrNull(cost.opL1GasPrice),
+    arb_l1_gas_allocation: u256OrNull(cost.arbL1GasAllocation),
   };
 }
