@@ -1,6 +1,6 @@
 import type { Database as DatabaseHandle } from "better-sqlite3";
 import { clockFor, type Duration } from "../core/clock.js";
-import type { CostRecord, LifecycleEvent, LifecycleStage, Outcome, SubmissionRef } from "../core/types.js";
+import type { LifecycleEvent, LifecycleStage, Outcome, SubmissionRef } from "../core/types.js";
 import type { ProtocolAdapter, RunContext } from "../protocols/adapter.js";
 import {
   getLifecycleEvent,
@@ -8,9 +8,8 @@ import {
   insertLifecycleRevision,
   setRunOutcome,
   updateLifecycleEvent,
-  upsertCosts,
 } from "../storage/db.js";
-import { toCostRow, toLifecycleEventRow } from "../storage/encode.js";
+import { toLifecycleEventRow } from "../storage/encode.js";
 
 /**
  * Lifecycle tracker (T9).
@@ -33,6 +32,19 @@ import { toCostRow, toLifecycleEventRow } from "../storage/encode.js";
  * a slow stage cannot take down a campaign. A timeout is a recorded result.
  */
 
+/**
+ * COSTS ORDERING DECISION - the tracker does NOT take or write costs.
+ *
+ * It previously accepted them as an option, which forced the caller to collect
+ * costs BEFORE tracking. That is unsatisfiable: sendTransaction resolves as soon
+ * as eth_sendRawTransaction responds, so at that moment no receipt exists and
+ * every cost field comes back null. The runner writes costs after trackRun
+ * returns, when the receipts it needs actually exist.
+ *
+ * The alternative - keep the option and have the runner collect first - was
+ * rejected because it leaves the same trap in the type: any future caller
+ * passing costs here would have had to obtain them too early.
+ */
 export interface TrackerOptions {
   /** Per-stage deadline. The clock restarts each time a stage arrives. */
   stageTimeoutMs?: number;
@@ -42,12 +54,6 @@ export interface TrackerOptions {
    * Omitted means no re-verification is possible and rows stay unfinalised.
    */
   reverify?: (event: LifecycleEvent) => Promise<{ blockNumber: bigint; blockTimestamp: bigint } | null>;
-  /**
-   * Costs for this run, if observed. When omitted NO costs row is written -
-   * absence means "not observed", never "measured as zero". See the decision
-   * recorded at the write site below.
-   */
-  costs?: CostRecord;
   now?: () => number;
 }
 
@@ -169,25 +175,9 @@ export async function trackRun(
   const outcome: Outcome = timedOut ? "timeout" : observed.size === 0 ? "pending" : "success";
   setRunOutcome(db, ctx.runId, outcome, null);
 
-  // COSTS DECISION - write a row only when costs were actually observed.
-  //
-  // An all-null row was rejected for the same reason param_snapshots refuses a
-  // sourceless value: absence of observation must not wear the shape of an
-  // observation. A row of nulls is indistinguishable at analysis time from a
-  // dry run, from a real run whose receipt never arrived, and from a genuine
-  // measurement of zero - and SUM/AVG over that column would silently include
-  // runs that were never measured.
-  //
-  // The alternative, a row plus an "observed" flag, was rejected as duplicated
-  // state: the runs row already answers why costs are missing. A dry run has no
-  // tx hashes, and outcome distinguishes 'timeout' from 'success'. Absence in
-  // costs plus the runs row is complete, and a LEFT JOIN yields NULL either way
-  // without anyone having to remember a flag.
-  if (opts.costs) {
-    upsertCosts(db, toCostRow(opts.costs));
-  } else {
-    log.debug({ run_id: ctx.runId }, "no costs observed for this run - writing no costs row");
-  }
+  // COSTS ARE NOT WRITTEN HERE - see the note on TrackerOptions. Receipts do
+  // not exist until the lifecycle this function is tracking has completed, so
+  // accepting costs as an input would build the wrong ordering into the type.
 
   const durations = computeDurations(ctx.chainKey, observed);
   const stagesMissing = [...adapter.supportedStages].filter((s) => !observed.has(s)).sort();
