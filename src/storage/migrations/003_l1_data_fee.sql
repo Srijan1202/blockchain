@@ -1,0 +1,68 @@
+-- 003_l1_data_fee.sql
+--
+-- Captures the data-availability component of an L2 transaction's cost, which
+-- was previously dropped entirely on the OP Stack.
+--
+-- WHAT WAS WRONG. collectCosts computed the L2 cost as
+-- gasUsed x effectiveGasPrice for both protocols. On Arbitrum that is complete.
+-- On the OP Stack it is not: the L1 data fee is charged SEPARATELY and appears
+-- as its own `l1Fee` field on the receipt. Measured on a real OP Sepolia run
+-- (tx 0xd7d775d3...): recorded 21005250000 wei, actual l1Fee 17292860331 wei,
+-- true total 38298110331 - so 45% of the cost was missing. The error was not
+-- uniform: it applied to one of the two protocols the paper compares, and in
+-- the direction that made the OP Stack look cheaper.
+--
+-- THE TWO QUANTITIES ARE NOT THE SAME THING, AND MUST NEVER BE SUMMED OR
+-- COMPARED ACROSS PROTOCOLS. This is why the columns carry protocol prefixes.
+--
+--   op_l1_data_fee_wei    OP Stack. A FEE, in wei, priced at the L1 gas price.
+--                         It is what posting this transaction's data to L1
+--                         actually cost, charged on top of L2 execution.
+--
+--   arb_l1_gas_allocation Arbitrum. An L2 GAS ALLOCATION, in gas units, priced
+--                         at the L2 gas price and already INCLUDED inside
+--                         l2_gas_used. It is Nitro's mechanism for recouping
+--                         the posting cost from the user - not a measurement of
+--                         what the L1 posting cost. Multiplying it by the
+--                         effective L2 gas price yields the share of the L2 fee
+--                         attributed to data availability, which is a different
+--                         quantity from op_l1_data_fee_wei and is not
+--                         interchangeable with it.
+--
+-- Adding these two together, or comparing one against the other, produces a
+-- number that means nothing. They are recorded so each protocol's own cost
+-- structure is visible, not so they can be pooled.
+--
+-- total_fee_wei - READ THIS BEFORE USING IT IN ANALYSIS.
+--
+-- total_fee_wei means "everything this transaction cost the user", and nothing
+-- narrower. That is the correct and intended basis for M-C4, and totals ARE
+-- comparable across protocols.
+--
+-- What is NOT valid is decomposing it and comparing the parts. On the OP Stack
+-- the total is L2 execution PLUS a separately-sourced L1 data fee. On Arbitrum
+-- the total is gasUsed x effectiveGasPrice, which is already inclusive and has
+-- no separable L1 component priced the same way. So:
+--
+--   VALID    comparing total_fee_wei across protocols
+--   INVALID  total_fee_wei - l2_fee_wei, compared across protocols
+--   INVALID  op_l1_data_fee_wei vs arb_l1_gas_allocation as "the L1 cost"
+--
+-- The natural next step for whoever writes the analysis is to subtract the
+-- components and compare them, because that is what one normally does with a
+-- decomposition. That is precisely where this breaks. Compare totals; use the
+-- per-protocol columns only to describe that protocol.
+--
+-- NOTE ON IDEMPOTENCY: unlike 001 and 002, ALTER TABLE ADD COLUMN has no
+-- IF NOT EXISTS form in SQLite, so this file is not self-idempotent. Re-running
+-- is prevented by the schema_migrations record, which is how the runner already
+-- decides what to apply.
+
+-- OP Stack: the separately-charged L1 data fee and its inputs.
+ALTER TABLE costs ADD COLUMN op_l1_data_fee_wei TEXT;
+ALTER TABLE costs ADD COLUMN op_l1_gas_used TEXT;
+ALTER TABLE costs ADD COLUMN op_l1_gas_price TEXT;
+
+-- Arbitrum: the L2 gas allocation attributed to L1 posting. A SUBSET of
+-- l2_gas_used, in gas units, NOT a wei fee. See the note above.
+ALTER TABLE costs ADD COLUMN arb_l1_gas_allocation TEXT;

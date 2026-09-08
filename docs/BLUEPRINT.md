@@ -306,8 +306,29 @@ dedicated congestion campaign if B's natural fee variation turns out to be too n
 **Cost**
 - `M-C1` L1 gas used × effective gas price for the submission tx
 - `M-C2` L1 gas for the `forceInclude` call *(Arbitrum only; structurally absent on OP)*
-- `M-C3` L2 execution gas
-- `M-C4` forced-path premium = (M-C1 + M-C2 + M-C3) / normal-path total cost
+- `M-C3` **total cost of the L2 transaction, including its data-availability
+  component.** Not "L2 execution gas" — that description was wrong for the OP Stack and
+  understated it by ~45% on a measured transfer. The two protocols charge for data
+  availability differently and the difference is structural, not incidental:
+  - **OP Stack** — `gasUsed × effectiveGasPrice` covers execution **only**. The L1 data
+    fee is charged separately and appears as `l1Fee` on the receipt, priced at the *L1*
+    gas price. M-C3 = execution + `l1Fee`. Recorded in `costs.op_l1_data_fee_wei`.
+  - **Arbitrum** — `gasUsed × effectiveGasPrice` is **already inclusive**. Nitro recoups
+    the posting cost by charging extra L2 gas, reported as `gasUsedForL1`: a *subset* of
+    `gasUsed`, in gas units, priced at the *L2* gas price. M-C3 = `gasUsed ×
+    effectiveGasPrice`, unchanged. Recorded in `costs.arb_l1_gas_allocation`.
+
+  `op_l1_data_fee_wei` and `arb_l1_gas_allocation` are **different quantities in different
+  units** and must never be summed or compared with each other as "the L1 cost."
+- `M-C4` forced-path premium = (M-C1 + M-C2 + M-C3) / normal-path total cost.
+
+  Computed from `costs.total_fee_wei`, which means *everything the transaction cost the
+  user* and nothing narrower. **Totals are comparable across protocols; decompositions are
+  not.** On the OP Stack the total is execution plus a separately-sourced, L1-priced data
+  fee; on Arbitrum it is a single inclusive figure with no separable component priced the
+  same way. So `total_fee_wei − l2_fee_wei` compared across protocols is not a like-for-like
+  quantity, even though it looks like one. Compare totals; use the per-protocol columns only
+  to describe that protocol. This is restated in `migrations/003_l1_data_fee.sql`.
 
 **Reliability**
 - `M-R1` success rate, `M-R2` failure rate, `M-R3` timeout rate, `M-R4` retry count

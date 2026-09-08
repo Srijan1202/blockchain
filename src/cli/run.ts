@@ -12,6 +12,7 @@ import { assertNotWellKnownTestKey } from "../core/keyguard.js";
 import { assertSufficient, formatRequirement, preflightBalances } from "../core/preflight.js";
 import { idempotencyKey } from "../core/retry.js";
 import type { CostRecord, SubmissionRef, TxSpec } from "../core/types.js";
+import { collectCosts } from "../measurement/costs.js";
 import { trackRun } from "../measurement/tracker.js";
 import { ArbitrumAdapter } from "../protocols/arbitrum/adapter.js";
 import { OpStackAdapter } from "../protocols/opstack/adapter.js";
@@ -133,72 +134,6 @@ function writeParamSnapshot(db: DatabaseHandle, experimentId: string, snap: Para
     logger.warn({ chain: snap.chainKey, error: err }, "parameter not recorded - no value or no source");
   }
   return written;
-}
-
-/** Costs from the receipts, where there are receipts to read. */
-async function collectCosts(
-  runId: string,
-  ref: SubmissionRef,
-  l1: PublicClient,
-  l2: PublicClient,
-): Promise<CostRecord | undefined> {
-  if (ref.l1TxHash === null && ref.l2TxHash === null) return undefined;
-  const costs: CostRecord = {
-    runId,
-    l1GasUsed: null, l1GasPrice: null, l1FeeWei: null,
-    forceGasUsed: null, forceFeeWei: null,
-    l2GasUsed: null, l2FeeWei: null, totalFeeWei: null, l1BaseFeeAtSubmit: null,
-  };
-  // A leg is "expected" when the submission produced a hash for it. Tracking
-  // may have timed out with some legs mined and others not; partial costs are
-  // legitimate data and are recorded, but the TOTAL is only meaningful when
-  // every expected leg was actually observed.
-  let expected = 0;
-  let observed = 0;
-  let total = 0n;
-
-  if (ref.l1TxHash !== null) {
-    expected++;
-    try {
-      const r = await l1.getTransactionReceipt({ hash: ref.l1TxHash });
-      costs.l1GasUsed = r.gasUsed;
-      costs.l1GasPrice = r.effectiveGasPrice;
-      costs.l1FeeWei = r.gasUsed * r.effectiveGasPrice;
-      total += costs.l1FeeWei;
-      const block = await l1.getBlock({ blockNumber: r.blockNumber });
-      costs.l1BaseFeeAtSubmit = block.baseFeePerGas ?? null;
-      observed++;
-    } catch { /* not mined; leave null rather than guess */ }
-  }
-  if (ref.l1ForceHash !== null) {
-    expected++;
-    try {
-      const r = await l1.getTransactionReceipt({ hash: ref.l1ForceHash });
-      costs.forceGasUsed = r.gasUsed;
-      costs.forceFeeWei = r.gasUsed * r.effectiveGasPrice;
-      total += costs.forceFeeWei;
-      observed++;
-    } catch { /* not mined */ }
-  }
-  if (ref.l2TxHash !== null) {
-    expected++;
-    try {
-      const r = await l2.getTransactionReceipt({ hash: ref.l2TxHash });
-      costs.l2GasUsed = r.gasUsed;
-      costs.l2FeeWei = r.gasUsed * r.effectiveGasPrice;
-      total += costs.l2FeeWei;
-      observed++;
-    } catch { /* not included */ }
-  }
-
-  // No receipt anywhere: nothing was observed, so no row (see the write site).
-  if (observed === 0) return undefined;
-
-  // Withhold the total on a partial observation rather than reporting a sum
-  // that silently omits a leg - M-C4 would be understated and look like a
-  // cheaper forced path than it was.
-  costs.totalFeeWei = observed === expected ? total : null;
-  return costs;
 }
 
 function senderAddress(dryRun: boolean): Address {
@@ -401,7 +336,7 @@ async function main(): Promise<void> {
     const result = await trackRun(db, adapter, ref, ctx, {});
 
     if (!args.dryRun) {
-      const costs = await collectCosts(runId, ref, l1, l2);
+      const costs = await collectCosts(runId, ref, cfg.family, l1, l2);
       if (costs) {
         upsertCosts(db, toCostRow(costs));
       } else {

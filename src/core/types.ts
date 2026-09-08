@@ -119,4 +119,26 @@ export interface CostRecord {
   totalFeeWei: bigint | null;
   /** For the congestion analysis (H3 / experiment D). */
   l1BaseFeeAtSubmit: bigint | null;
+
+  /**
+   * OP Stack ONLY. The L1 data fee, in wei, priced at the L1 gas price and
+   * charged on top of L2 execution. This is a FEE.
+   *
+   * Not interchangeable with arbL1GasAllocation below - see migration 003.
+   */
+  opL1DataFeeWei: bigint | null;
+  /** OP Stack only. L1 gas units used to post this transaction's data. */
+  opL1GasUsed: bigint | null;
+  /** OP Stack only. The L1 gas price used to price the data fee. */
+  opL1GasPrice: bigint | null;
+
+  /**
+   * Arbitrum ONLY. gasUsedForL1: an L2 GAS ALLOCATION, already included inside
+   * l2GasUsed and priced at the L2 gas price. Nitro's way of recouping the
+   * posting cost - NOT a measurement of what the L1 posting cost.
+   *
+   * Never sum or compare this with opL1DataFeeWei; they are different
+   * quantities in different units. See migration 003.
+   */
+  arbL1GasAllocation: bigint | null;
 }

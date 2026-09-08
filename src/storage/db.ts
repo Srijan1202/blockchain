@@ -193,6 +193,12 @@ export interface CostRow {
   l2_fee_wei?: U256String | null;
   total_fee_wei?: U256String | null;
   l1_base_fee_at_submit?: U256String | null;
+  /** OP Stack only: a FEE in wei, L1-priced. See migration 003. */
+  op_l1_data_fee_wei?: U256String | null;
+  op_l1_gas_used?: U256String | null;
+  op_l1_gas_price?: U256String | null;
+  /** Arbitrum only: an L2 GAS allocation inside l2_gas_used. Not a fee. */
+  arb_l1_gas_allocation?: U256String | null;
 }
 
 export interface MainnetEventRow {
@@ -416,10 +422,12 @@ export function upsertCosts(db: DatabaseHandle, row: CostRow): void {
   db.prepare(
     `INSERT INTO costs
        (run_id, l1_gas_used, l1_gas_price, l1_fee_wei, force_gas_used, force_fee_wei,
-        l2_gas_used, l2_fee_wei, total_fee_wei, l1_base_fee_at_submit)
+        l2_gas_used, l2_fee_wei, total_fee_wei, l1_base_fee_at_submit,
+        op_l1_data_fee_wei, op_l1_gas_used, op_l1_gas_price, arb_l1_gas_allocation)
      VALUES
        (@run_id, @l1_gas_used, @l1_gas_price, @l1_fee_wei, @force_gas_used, @force_fee_wei,
-        @l2_gas_used, @l2_fee_wei, @total_fee_wei, @l1_base_fee_at_submit)
+        @l2_gas_used, @l2_fee_wei, @total_fee_wei, @l1_base_fee_at_submit,
+        @op_l1_data_fee_wei, @op_l1_gas_used, @op_l1_gas_price, @arb_l1_gas_allocation)
      ON CONFLICT(run_id) DO UPDATE SET
        l1_gas_used = excluded.l1_gas_used,
        l1_gas_price = excluded.l1_gas_price,
@@ -429,7 +437,11 @@ export function upsertCosts(db: DatabaseHandle, row: CostRow): void {
        l2_gas_used = excluded.l2_gas_used,
        l2_fee_wei = excluded.l2_fee_wei,
        total_fee_wei = excluded.total_fee_wei,
-       l1_base_fee_at_submit = excluded.l1_base_fee_at_submit`,
+       l1_base_fee_at_submit = excluded.l1_base_fee_at_submit,
+       op_l1_data_fee_wei = excluded.op_l1_data_fee_wei,
+       op_l1_gas_used = excluded.op_l1_gas_used,
+       op_l1_gas_price = excluded.op_l1_gas_price,
+       arb_l1_gas_allocation = excluded.arb_l1_gas_allocation`,
   ).run({
     l1_gas_used: null,
     l1_gas_price: null,
@@ -440,6 +452,10 @@ export function upsertCosts(db: DatabaseHandle, row: CostRow): void {
     l2_fee_wei: null,
     total_fee_wei: null,
     l1_base_fee_at_submit: null,
+    op_l1_data_fee_wei: null,
+    op_l1_gas_used: null,
+    op_l1_gas_price: null,
+    arb_l1_gas_allocation: null,
     ...row,
   });
 }
