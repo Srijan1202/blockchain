@@ -8,6 +8,7 @@ import { L2S, type L2Config } from "../config/chains.js";
 import { campaignId, experimentDef, type ExperimentDef } from "../config/experiments.js";
 import { childLogger, logger } from "../core/logger.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../core/params.js";
+import { assertNotWellKnownTestKey } from "../core/keyguard.js";
 import { assertSufficient, formatRequirement, preflightBalances } from "../core/preflight.js";
 import { idempotencyKey } from "../core/retry.js";
 import type { CostRecord, SubmissionRef, TxSpec } from "../core/types.js";
@@ -210,7 +211,12 @@ function senderAddress(dryRun: boolean): Address {
     }
     throw new Error("PRIVATE_KEY is missing or the all-zero placeholder. A real campaign needs a funded TESTNET key.");
   }
-  return privateKeyToAccount(key as Hex).address;
+  const address = privateKeyToAccount(key as Hex).address;
+  // Fires here so --check-only refuses too: a green wallet report for a key
+  // that will be rejected the moment the flag is dropped is the wrong order to
+  // find out. The adapters guard again at the last gate before signing.
+  assertNotWellKnownTestKey(address, "campaign sender from PRIVATE_KEY");
+  return address;
 }
 
 function buildTxSpec(def: ExperimentDef, sender: Address): TxSpec {
