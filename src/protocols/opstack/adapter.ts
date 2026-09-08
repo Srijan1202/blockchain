@@ -12,8 +12,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { assertNotWellKnownTestKey } from "../../core/keyguard.js";
 import { L2S, type L2Config } from "../../config/chains.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../../core/params.js";
-import type { LifecycleEvent, SubmissionRef, TxSpec } from "../../core/types.js";
-import { OPSTACK_SUPPORTED_STAGES, type ProtocolAdapter, type RunContext } from "../adapter.js";
+import type { LifecycleEvent, LifecycleStage, RunPath, SubmissionRef, TxSpec } from "../../core/types.js";
+import { OPSTACK_SUPPORTED_STAGES, NORMAL_PATH_STAGES, type ProtocolAdapter, type RunContext } from "../adapter.js";
 import { OPTIMISM_PORTAL_DEPOSIT_ABI } from "./abi.js";
 import { depositFromLog } from "./deposit.js";
 
@@ -77,6 +77,14 @@ export class OpStackAdapter implements ProtocolAdapter {
     this.stageTimeoutMs = opts.stageTimeoutMs ?? 30 * 60_000;
   }
 
+  /**
+   * Stages applicable to this path. See ProtocolAdapter.stagesForPath.
+   * The normal path has no L1 legs, so S3-S6 do not apply to it.
+   */
+  stagesForPath(path: RunPath): ReadonlySet<LifecycleStage> {
+    return path === "normal" ? NORMAL_PATH_STAGES : this.supportedStages;
+  }
+
   private l1(): PublicClient {
     return l1Client();
   }
@@ -102,10 +110,14 @@ export class OpStackAdapter implements ProtocolAdapter {
 
   /** Baseline path: an ordinary transaction through the L2 sequencer RPC. */
   async submitNormal(tx: TxSpec, ctx: RunContext): Promise<SubmissionRef> {
-    const submittedAt = new Date().toISOString();
+    // S1: the transaction is fully determined here. viem signs inside
+    // sendTransaction, so generation and submission are milliseconds apart on
+    // this path - recorded honestly rather than inflated into a gap.
+    const generatedAt = new Date().toISOString();
+    const submittedAt = generatedAt;
     if (ctx.dryRun) {
       ctx.logger.info({ chain: this.chainKey, path: "normal", to: tx.to }, "dry run: normal tx not sent");
-      return makeRef(ctx, "normal", submittedAt, {});
+      return makeRef(ctx, "normal", generatedAt, submittedAt, {});
     }
     const wallet = createWalletClient({ account: this.account(), transport: http(rpcFor(this.cfg.rpcEnv)) });
     const hash = await wallet.sendTransaction({
@@ -116,7 +128,7 @@ export class OpStackAdapter implements ProtocolAdapter {
       chain: null,
     });
     ctx.logger.info({ chain: this.chainKey, path: "normal", l2_tx_hash: hash }, "normal tx submitted");
-    return makeRef(ctx, "normal", submittedAt, { l2TxHash: hash });
+    return makeRef(ctx, "normal", generatedAt, submittedAt, { l2TxHash: hash });
   }
 
   /**
@@ -132,7 +144,8 @@ export class OpStackAdapter implements ProtocolAdapter {
    */
   async submitForced(tx: TxSpec, ctx: RunContext): Promise<SubmissionRef> {
     const call = buildDepositCall(this.portal, tx);
-    const submittedAt = new Date().toISOString(); // S2, wall clock
+    const generatedAt = new Date().toISOString(); // S1: deposit call constructed
+    const submittedAt = generatedAt; // S2, wall clock
 
     if (ctx.dryRun) {
       ctx.logger.info(
@@ -145,7 +158,7 @@ export class OpStackAdapter implements ProtocolAdapter {
         },
         "dry run: depositTransaction constructed, not sent",
       );
-      return makeRef(ctx, "forced", submittedAt, {});
+      return makeRef(ctx, "forced", generatedAt, submittedAt, {});
     }
 
     const wallet = createWalletClient({
@@ -162,7 +175,7 @@ export class OpStackAdapter implements ProtocolAdapter {
       { chain: this.chainKey, path: "forced", l1_tx_hash: hash, portal: this.portal },
       "depositTransaction submitted",
     );
-    return makeRef(ctx, "forced", submittedAt, { l1TxHash: hash });
+    return makeRef(ctx, "forced", generatedAt, submittedAt, { l1TxHash: hash });
   }
 
   /**
@@ -198,13 +211,41 @@ export class OpStackAdapter implements ProtocolAdapter {
    * faked - the tracker records the timeout as an outcome (T9).
    */
   async *track(submission: SubmissionRef, ctx: RunContext): AsyncIterable<LifecycleEvent> {
-    yield makeEvent(ctx, "S2", "L1", "wall", "observed", {
+    yield makeEvent(ctx, "S1", "L2", "wall", "observed", {
+      blockTimestamp: BigInt(Math.floor(Date.parse(submission.generatedAt) / 1000)),
+      observedAt: submission.generatedAt,
+    });
+    // S2's layer follows the path: the forced path hands the transaction to L1,
+    // the normal path hands it to the L2 sequencer RPC. Recording L1 for both
+    // would misattribute where a normal-path submission actually went.
+    yield makeEvent(ctx, "S2", submission.path === "normal" ? "L2" : "L1", "wall", "observed", {
       blockTimestamp: BigInt(Math.floor(Date.parse(submission.submittedAt) / 1000)),
       observedAt: submission.submittedAt,
     });
 
+    // Branch on the PATH, never on which hash happens to be null. The normal
+    // path legitimately has no L1 hash - it goes straight to the sequencer RPC -
+    // so inferring "dry run" from a null l1TxHash silently truncated every real
+    // Experiment A run at S2, and returned fast enough that cost collection ran
+    // before any receipt existed.
+    if (ctx.dryRun) {
+      ctx.logger.info(
+        { chain: this.chainKey, path: submission.path },
+        "dry run: nothing was sent, so no on-chain stage can be observed - stopping after S2",
+      );
+      return;
+    }
+
+    if (submission.path === "normal") {
+      yield* this.trackNormal(submission, ctx);
+      return;
+    }
+
     if (submission.l1TxHash === null) {
-      ctx.logger.info({ chain: this.chainKey }, "track: no L1 hash (dry run) - stopping after S2");
+      ctx.logger.error(
+        { chain: this.chainKey, run_id: submission.runId },
+        "forced path with no L1 hash - cannot track; recording nothing rather than guessing",
+      );
       return;
     }
 
@@ -259,6 +300,45 @@ export class OpStackAdapter implements ProtocolAdapter {
       blockTimestamp: l1Block.timestamp,
       finalized: true,
       rawRef: `finalized@${finalizedAt}`,
+    });
+  }
+
+
+  /**
+   * Normal-path lifecycle: S7 (L2 appearance) and S8 (L2 execution).
+   *
+   * There are no S3-S6 stages here - the transaction never touches L1 on the
+   * way in - and S9 is not reported: see NORMAL_PATH_STAGES for why observing
+   * L1 finality of a sequenced transaction would mean following the batch that
+   * carries it, which is a different measurement.
+   *
+   * This deliberately does not return until the L2 receipt exists (or the stage
+   * times out), because the runner collects costs after tracking and a receipt
+   * that has not landed yet yields no costs at all.
+   */
+  private async *trackNormal(submission: SubmissionRef, ctx: RunContext): AsyncIterable<LifecycleEvent> {
+    if (submission.l2TxHash === null) {
+      ctx.logger.error(
+        { chain: this.chainKey, run_id: submission.runId },
+        "normal path with no L2 hash - nothing to track",
+      );
+      return;
+    }
+    const l2 = this.l2();
+    const appeared = await this.waitForL2Deposit(l2, submission.l2TxHash, ctx);
+    if (!appeared) return;
+
+    yield makeEvent(ctx, "S7", "L2", "l2_block", "observed", {
+      blockNumber: appeared.blockNumber,
+      blockTimestamp: appeared.timestamp,
+      rawRef: submission.l2TxHash,
+    });
+
+    const receipt = await l2.getTransactionReceipt({ hash: submission.l2TxHash });
+    yield makeEvent(ctx, "S8", "L2", "l2_block", "observed", {
+      blockNumber: receipt.blockNumber,
+      blockTimestamp: appeared.timestamp,
+      rawRef: `${submission.l2TxHash}#receipt:${receipt.status}`,
     });
   }
 
@@ -391,6 +471,7 @@ function rpcFor(envKey: string): string {
 function makeRef(
   ctx: RunContext,
   path: "normal" | "forced",
+  generatedAt: string,
   submittedAt: string,
   hashes: { l1TxHash?: Hex; l2TxHash?: Hex },
 ): SubmissionRef {
@@ -402,6 +483,7 @@ function makeRef(
     // Always null on the OP Stack: there is no force leg. That is M-U1.
     l1ForceHash: null,
     l2TxHash: hashes.l2TxHash ?? null,
+    generatedAt,
     submittedAt,
   };
 }

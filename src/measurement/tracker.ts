@@ -180,7 +180,13 @@ export async function trackRun(
   // accepting costs as an input would build the wrong ordering into the type.
 
   const durations = computeDurations(ctx.chainKey, observed);
-  const stagesMissing = [...adapter.supportedStages].filter((s) => !observed.has(s)).sort();
+  // Missing is reported against the PATH's stage set, not the protocol's.
+  // S3-S6 do not exist on the normal path, so listing them as missing would
+  // conflate "not applicable here" with "applicable and not observed" - the
+  // same ambiguity T7 removed for S5/S6, one level down. See
+  // ProtocolAdapter.stagesForPath.
+  const applicable = adapter.stagesForPath(submission.path);
+  const stagesMissing = [...applicable].filter((s) => !observed.has(s)).sort();
 
   return {
     runId: ctx.runId,

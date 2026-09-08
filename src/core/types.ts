@@ -55,7 +55,13 @@ export interface SubmissionRef {
   l1TxHash: Hex | null;
   l1ForceHash: Hex | null;
   l2TxHash: Hex | null;
-  /** Local wall clock at submission, ISO8601. */
+  /**
+   * Local wall clock when the transaction was CONSTRUCTED/SIGNED, ISO8601.
+   * This is stage S1. It is distinct from submittedAt (S2, handed to the path)
+   * even where the two are milliseconds apart, and M-L4 is measured from it.
+   */
+  generatedAt: string;
+  /** Local wall clock at submission, ISO8601. This is stage S2. */
   submittedAt: string;
 }
 
