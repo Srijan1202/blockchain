@@ -9,6 +9,7 @@ import {
   type TransactionReceipt,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { assertNotWellKnownTestKey } from "../../core/keyguard.js";
 import { L2S, type L2Config } from "../../config/chains.js";
 import { l1Client, l2Client, snapshotParams, type ParamSnapshot } from "../../core/params.js";
 import type { LifecycleEvent, SubmissionRef, TxSpec } from "../../core/types.js";
@@ -91,7 +92,12 @@ export class OpStackAdapter implements ProtocolAdapter {
         "PRIVATE_KEY is missing or is the all-zero placeholder. Set a funded TESTNET key in .env before sending.",
       );
     }
-    return privateKeyToAccount(key as Hex);
+    const account = privateKeyToAccount(key as Hex);
+    // Last gate before signing. run.ts guards earlier, but this method is
+    // reachable without the CLI, so a real send must not depend on that.
+    // dryRunAccount() below is deliberately exempt: it never sends.
+    assertNotWellKnownTestKey(account.address, "OP Stack adapter signing key");
+    return account;
   }
 
   /** Baseline path: an ordinary transaction through the L2 sequencer RPC. */
