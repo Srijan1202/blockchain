@@ -18,6 +18,7 @@ import { ArbitrumAdapter } from "../protocols/arbitrum/adapter.js";
 import { OpStackAdapter } from "../protocols/opstack/adapter.js";
 import type { ProtocolAdapter, RunContext } from "../protocols/adapter.js";
 import {
+  appendExperimentNote,
   experimentExists,
   hasAlreadySubmitted,
   initDb,
@@ -49,8 +50,21 @@ interface Args {
   n: number;
   dryRun: boolean;
   checkOnly: boolean;
+  /**
+   * Per-stage deadline for the tracker.
+   *
+   * A CLI flag rather than a per-chain constant on purpose: the timeout is a
+   * property of the EXPERIMENTAL SETUP, not of the protocol. Hardcoding one per
+   * chain would bake a guess about the latency distribution into the harness
+   * from a handful of samples, and I1's reasoning applies - a number that
+   * governs measurement should be declared and recorded, not assumed.
+   */
+  stageTimeoutMs: number;
   suffix?: string;
 }
+
+/** 30 minutes. Unchanged default; override per campaign with --stage-timeout-ms. */
+const DEFAULT_STAGE_TIMEOUT_MS = 1_800_000;
 
 function parseArgs(argv: string[]): Args {
   const get = (flag: string): string | undefined => {
@@ -61,10 +75,18 @@ function parseArgs(argv: string[]): Args {
   const chain = get("--chain");
   const nRaw = get("--n");
   if (!experiment || !chain) {
-    throw new Error("usage: npm run run -- --experiment B --chain op-sepolia --n 25 [--dry-run | --check-only] [--campaign-suffix S]");
+    throw new Error(
+      "usage: npm run run -- --experiment B --chain op-sepolia --n 25 " +
+        "[--stage-timeout-ms 3600000] [--dry-run | --check-only] [--campaign-suffix S]",
+    );
   }
   const n = nRaw === undefined ? 1 : Number(nRaw);
   if (!Number.isInteger(n) || n < 1) throw new Error(`--n must be a positive integer, got ${nRaw}`);
+  const timeoutRaw = get("--stage-timeout-ms");
+  const stageTimeoutMs = timeoutRaw === undefined ? DEFAULT_STAGE_TIMEOUT_MS : Number(timeoutRaw);
+  if (!Number.isInteger(stageTimeoutMs) || stageTimeoutMs <= 0) {
+    throw new Error(`--stage-timeout-ms must be a positive integer, got ${timeoutRaw}`);
+  }
   const dryRun = argv.includes("--dry-run");
   const checkOnly = argv.includes("--check-only");
   if (dryRun && checkOnly) {
@@ -73,7 +95,7 @@ function parseArgs(argv: string[]): Args {
         "--check-only checks the real wallet. Pass one.",
     );
   }
-  return { experiment, chain, n, dryRun, checkOnly, suffix: get("--campaign-suffix") };
+  return { experiment, chain, n, dryRun, checkOnly, stageTimeoutMs, suffix: get("--campaign-suffix") };
 }
 
 /** The commit the data was produced by. Reproducibility is a deliverable. */
@@ -87,9 +109,18 @@ function gitCommit(): string {
   }
 }
 
-function buildAdapter(cfg: L2Config): ProtocolAdapter {
-  if (cfg.family === "arbitrum-nitro") return new ArbitrumAdapter(cfg.key);
-  if (cfg.family === "op-stack") return new OpStackAdapter(cfg.key);
+/**
+ * The timeout must reach the ADAPTER too, not just the tracker.
+ *
+ * There are two independent deadlines: the tracker races each iterator.next(),
+ * and the adapter's own polling loops (waitForL2Tx, waitForL1Receipt,
+ * waitForL1Finality) carry their own budget. Threading the flag into only one
+ * of them would leave the other at its 30-minute default, so raising the flag
+ * would appear to do nothing.
+ */
+function buildAdapter(cfg: L2Config, stageTimeoutMs: number): ProtocolAdapter {
+  if (cfg.family === "arbitrum-nitro") return new ArbitrumAdapter(cfg.key, { stageTimeoutMs });
+  if (cfg.family === "op-stack") return new OpStackAdapter(cfg.key, { stageTimeoutMs });
   throw new Error(`No adapter for family ${cfg.family}`);
 }
 
@@ -154,6 +185,21 @@ function senderAddress(dryRun: boolean): Address {
   return address;
 }
 
+/**
+ * How the timeout is recorded in the dataset.
+ *
+ * DECISION - experiments.notes, not param_snapshots. param_snapshots.source is
+ * constrained to 'on-chain' | 'rollup-config' | 'docs', and a stage timeout has
+ * none of those provenances: it is an operator's choice about the measurement
+ * setup, not a value read from the protocol. Recording it there would mean
+ * either a false source label or widening the CHECK - the same category error
+ * the Base Sepolia bound decision rejected. The campaign record is where an
+ * experimental setting belongs.
+ */
+function stageTimeoutNote(ms: number): string {
+  return `stage_timeout_ms=${ms}`;
+}
+
 function buildTxSpec(def: ExperimentDef, sender: Address): TxSpec {
   return {
     to: def.to ?? sender, // self-transfer by default, so a campaign does not burn its own funds
@@ -178,13 +224,21 @@ async function main(): Promise<void> {
 
   const experimentId = campaignId(args.experiment, args.chain, args.suffix);
   const db = initDb();
-  const adapter = buildAdapter(cfg);
+  const adapter = buildAdapter(cfg, args.stageTimeoutMs);
   const sender = senderAddress(args.dryRun && !args.checkOnly);
   const l1 = l1Client();
   const l2 = l2Client(cfg);
 
   logger.info(
-    { experiment_id: experimentId, chain: args.chain, n: args.n, dry_run: args.dryRun, check_only: args.checkOnly, path: def.path },
+    {
+      experiment_id: experimentId,
+      chain: args.chain,
+      n: args.n,
+      dry_run: args.dryRun,
+      check_only: args.checkOnly,
+      path: def.path,
+      stage_timeout_ms: args.stageTimeoutMs,
+    },
     args.checkOnly
       ? "balance check only - nothing will be created or sent"
       : args.dryRun
@@ -259,6 +313,10 @@ async function main(): Promise<void> {
 
   if (experimentExists(db, experimentId)) {
     logger.info({ experiment_id: experimentId }, "campaign already exists - resuming, not restarting");
+    // The campaign row already exists, so the note written at creation cannot
+    // cover a later invocation that used a different timeout. Record it too, so
+    // every value the campaign ran under is recoverable from the dataset.
+    appendExperimentNote(db, experimentId, stageTimeoutNote(args.stageTimeoutMs));
   } else {
     insertExperiment(db, {
       experiment_id: experimentId,
@@ -269,7 +327,9 @@ async function main(): Promise<void> {
       started_at: new Date().toISOString(),
       git_commit: gitCommit(),
       harness_version: HARNESS_VERSION,
-      notes: `${def.name}${args.dryRun ? " [DRY RUN]" : ""}. ${def.notes}`,
+      notes:
+        `${def.name}${args.dryRun ? " [DRY RUN]" : ""}. ${def.notes} ` +
+        `| ${stageTimeoutNote(args.stageTimeoutMs)}`,
     });
     const snap = await adapter.snapshotParams();
     const written = writeParamSnapshot(db, experimentId, snap);
@@ -333,7 +393,7 @@ async function main(): Promise<void> {
     // costs row while the campaign reported success. Every cost metric would
     // have been empty. The receipts exist once trackRun has followed the
     // lifecycle through to L2 execution.
-    const result = await trackRun(db, adapter, ref, ctx, {});
+    const result = await trackRun(db, adapter, ref, ctx, { stageTimeoutMs: args.stageTimeoutMs });
 
     if (!args.dryRun) {
       const costs = await collectCosts(runId, ref, cfg.family, l1, l2);

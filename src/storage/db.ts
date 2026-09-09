@@ -227,6 +227,26 @@ export function insertExperiment(db: DatabaseHandle, row: ExperimentRow): void {
   ).run({ ended_at: null, notes: null, ...row });
 }
 
+/**
+ * Append a line to a campaign's notes, if not already present.
+ *
+ * A campaign can span several invocations, and a measurement parameter set on
+ * one of them must not be lost just because the experiments row already
+ * existed. Idempotent so repeated resumes do not accumulate duplicates.
+ */
+export function appendExperimentNote(db: DatabaseHandle, experimentId: string, note: string): void {
+  const row = db.prepare("SELECT notes FROM experiments WHERE experiment_id = ?").get(experimentId) as
+    | { notes: string | null }
+    | undefined;
+  if (row === undefined) return;
+  const existing = row.notes ?? "";
+  if (existing.includes(note)) return;
+  db.prepare("UPDATE experiments SET notes = ? WHERE experiment_id = ?").run(
+    existing ? `${existing} | ${note}` : note,
+    experimentId,
+  );
+}
+
 export function setExperimentEnded(db: DatabaseHandle, experimentId: string, endedAt: string): void {
   db.prepare("UPDATE experiments SET ended_at = ? WHERE experiment_id = ?").run(endedAt, experimentId);
 }
