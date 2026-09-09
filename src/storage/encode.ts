@@ -110,6 +110,30 @@ export function toLifecycleEventRow(event: LifecycleEvent): LifecycleEventRow {
   };
 }
 
+/**
+ * Row -> domain, for reading stages that were already recorded.
+ *
+ * The inverse of toLifecycleEventRow. Used when resuming an interrupted run, so
+ * previously-stored stages can seed the tracker without being re-derived or
+ * rewritten.
+ */
+export function fromLifecycleEventRow(row: LifecycleEventRow): LifecycleEvent {
+  return {
+    eventId: row.event_id,
+    runId: row.run_id,
+    stage: row.stage,
+    chainLayer: row.chain_layer,
+    blockNumber: row.block_number === null || row.block_number === undefined ? null : BigInt(row.block_number),
+    blockTimestamp:
+      row.block_timestamp === null || row.block_timestamp === undefined ? null : BigInt(row.block_timestamp),
+    observedAt: row.observed_at ?? null,
+    clockSource: row.clock_source,
+    confidence: row.confidence,
+    finalized: row.finalized === 1,
+    rawRef: row.raw_ref ?? null,
+  };
+}
+
 export function toCostRow(cost: CostRecord): CostRow {
   return {
     run_id: cost.runId,
