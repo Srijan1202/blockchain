@@ -268,14 +268,17 @@ export class OpStackAdapter implements ProtocolAdapter {
       );
       return;
     }
+    const { l2TxHash } = depositFromLog(deposited.decoded);
+    ctx.logger.info({ chain: this.chainKey, l2_tx_hash: l2TxHash }, "derived L2 deposit tx hash");
+    // Surface it for persistence NOW, not at S7. It is knowable the moment the
+    // L1 log is decoded, and storing it here is what lets an interrupted run be
+    // resumed - a resume with no L2 hash has nothing to poll for.
     yield makeEvent(ctx, "S4", "L1", "l1_block", "observed", {
       blockNumber: receipt.blockNumber,
       blockTimestamp: l1Block.timestamp,
       rawRef: `TransactionDeposited#${deposited.logIndex}`,
+      discovered: { l2TxHash },
     });
-
-    const { l2TxHash } = depositFromLog(deposited.decoded);
-    ctx.logger.info({ chain: this.chainKey, l2_tx_hash: l2TxHash }, "derived L2 deposit tx hash");
 
     const l2 = this.l2();
     const appeared = await this.waitForL2Deposit(l2, l2TxHash, ctx);

@@ -288,6 +288,46 @@ export function setRunSubmission(
   });
 }
 
+export interface ResumableRun {
+  run_id: string;
+  experiment_id: string;
+  chain_key: string;
+  path: RunPath;
+  outcome: Outcome;
+  l1_tx_hash: string | null;
+  l1_force_hash: string | null;
+  l2_tx_hash: string | null;
+}
+
+/**
+ * Runs that were submitted but whose lifecycle never completed.
+ *
+ * 'pending' means tracking never finished; 'timeout' means a stage did not
+ * arrive in time. Both are resumable from their stored hashes because the
+ * transaction is already on chain - nothing needs re-sending.
+ */
+export function resumableRuns(db: DatabaseHandle, experimentId?: string): ResumableRun[] {
+  const where = experimentId ? "AND r.experiment_id = ?" : "";
+  const args = experimentId ? [experimentId] : [];
+  return db
+    .prepare(
+      `SELECT r.run_id, r.experiment_id, e.chain_key, r.path, r.outcome,
+              r.l1_tx_hash, r.l1_force_hash, r.l2_tx_hash
+       FROM runs r JOIN experiments e USING(experiment_id)
+       WHERE r.outcome IN ('pending','timeout')
+         AND (r.l1_tx_hash IS NOT NULL OR r.l2_tx_hash IS NOT NULL)
+         ${where}
+       ORDER BY r.submitted_at`,
+    )
+    .all(...args) as ResumableRun[];
+}
+
+export function lifecycleEventsForRun(db: DatabaseHandle, runId: string): LifecycleEventRow[] {
+  return db
+    .prepare("SELECT * FROM lifecycle_events WHERE run_id = ? ORDER BY stage")
+    .all(runId) as LifecycleEventRow[];
+}
+
 export function experimentExists(db: DatabaseHandle, experimentId: string): boolean {
   return db.prepare("SELECT 1 FROM experiments WHERE experiment_id = ?").get(experimentId) !== undefined;
 }

@@ -7,6 +7,7 @@ import {
   insertLifecycleEvent,
   insertLifecycleRevision,
   setRunOutcome,
+  setRunSubmission,
   updateLifecycleEvent,
 } from "../storage/db.js";
 import { toLifecycleEventRow } from "../storage/encode.js";
@@ -54,6 +55,21 @@ export interface TrackerOptions {
    * Omitted means no re-verification is possible and rows stay unfinalised.
    */
   reverify?: (event: LifecycleEvent) => Promise<{ blockNumber: bigint; blockTimestamp: bigint } | null>;
+  /**
+   * Stages already recorded by an earlier, interrupted attempt at this run.
+   *
+   * Used when resuming. adapter.track() replays the whole stream from the
+   * start - which is what lets a resume reuse the real tracking logic instead
+   * of a parallel implementation - so stages listed here are seeded from the
+   * database and NOT re-persisted when they come round again.
+   *
+   * They are deliberately not written to lifecycle_event_revisions either: that
+   * table records genuine corrections such as a reorg, and replaying an
+   * interruption is not a correction. If a replayed value nevertheless
+   * disagrees with what was stored, it is logged rather than silently dropped,
+   * because that would mean the chain really did move.
+   */
+  preObserved?: Map<LifecycleStage, LifecycleEvent>;
   now?: () => number;
 }
 
@@ -88,6 +104,8 @@ export async function trackRun(
   const log = ctx.logger;
 
   const observed = new Map<LifecycleStage, LifecycleEvent>();
+  const preObserved = opts.preObserved ?? new Map<LifecycleStage, LifecycleEvent>();
+  for (const [stage, event] of preObserved) observed.set(stage, event);
   let revisions = 0;
   // Tracked separately from lastStage on purpose: a run that times out BEFORE
   // its first stage has still timed out, and inferring the outcome from
@@ -122,6 +140,41 @@ export async function trackRun(
         { run_id: ctx.runId, stage: event.stage },
         "adapter emitted an unsupported stage - refusing to persist",
       );
+      continue;
+    }
+
+    // Hashes that only became knowable during tracking are persisted onto the
+    // run as soon as they appear. Without this the forced OP path leaves
+    // runs.l2_tx_hash null and cost collection skips the entire L2 leg.
+    if (event.discovered?.l2TxHash || event.discovered?.l1ForceHash) {
+      setRunSubmission(db, ctx.runId, {
+        l2TxHash: event.discovered.l2TxHash ?? null,
+        l1ForceHash: event.discovered.l1ForceHash ?? null,
+      });
+      log.info(
+        { stage: event.stage, l2_tx_hash: event.discovered.l2TxHash ?? null },
+        "persisted hash discovered while tracking",
+      );
+    }
+
+    const already = preObserved.get(event.stage);
+    if (already !== undefined) {
+      // Recorded by the interrupted attempt. Keep the stored observation and do
+      // not rewrite it - see TrackerOptions.preObserved.
+      if (
+        already.blockNumber !== event.blockNumber ||
+        already.blockTimestamp !== event.blockTimestamp
+      ) {
+        log.warn(
+          {
+            stage: event.stage,
+            stored_block: already.blockNumber?.toString() ?? null,
+            replayed_block: event.blockNumber?.toString() ?? null,
+          },
+          "replayed stage disagrees with the stored one - keeping the stored value; investigate before trusting this run",
+        );
+      }
+      lastStage = event.stage;
       continue;
     }
 

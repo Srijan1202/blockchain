@@ -81,6 +81,19 @@ export interface LifecycleEvent {
   finalized: boolean;
   /** Event signature / log index, so a row can be traced back to chain data. */
   rawRef: string | null;
+  /**
+   * Hashes that only became knowable DURING tracking, for the tracker to
+   * persist onto the run.
+   *
+   * The forced OP path cannot know its L2 deposit hash at submission time: the
+   * hash derives from the L1 block hash and log index, which do not exist until
+   * the receipt lands. Surfacing it here as structured data - rather than
+   * leaving it to be scraped back out of rawRef - is what stops runs.l2_tx_hash
+   * staying null and collectCosts skipping the whole L2 leg.
+   *
+   * Not a column: toLifecycleEventRow ignores it.
+   */
+  discovered?: { l2TxHash?: Hex; l1ForceHash?: Hex };
 }
 
 /** One submitted transaction. */
