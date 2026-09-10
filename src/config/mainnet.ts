@@ -62,6 +62,32 @@ export const OBSERVED_CHAINS: readonly ObservedChain[] = [
       {
         label: "SequencerInbox",
         kind: "arbitrum-sequencer-inbox",
+        /**
+         * ONE ADDRESS AND ONE SELECTOR COVER ALL OF NITRO-ERA HISTORY.
+         * Both had to be checked rather than assumed, because the surrounding
+         * contracts did change.
+         *
+         * Address: the PROXY is stable. bridge.sequencerInbox() returns this
+         * address at every block sampled from 15,411,100 to 25,949,044 (10
+         * points spanning Nitro). The proxy first has code at block 15,411,056
+         * (2022-08-25), which is the correct floor for "Nitro-era".
+         * By contrast the ROLLUP address did change - 0x4DCeB440...DCfc0 first
+         * has code only at block 21,830,860 - so resolving the inbox via
+         * rollup() would have silently missed everything before the BoLD
+         * upgrade. Resolve via the Bridge, not the Rollup.
+         *
+         * Selector: five distinct implementations have sat behind this proxy
+         *   0xbe04Ab2728c924D678f9FC833E379688c6eFA317
+         *   0x16242595cAfA3a207E9354E3bdb000B59bA82875
+         *   0xD03bFe2CE83632F4E618a97299cc91B1335BB2d9
+         *   0x31DA64D19Cd31A19CD09F4070366Fe2144792cf7
+         *   0x98a58ADAb0f8A66A1BF4544d804bc0475dff32c7  (current)
+         * and ALL FIVE contain 0xf1981578 in their dispatch tables. None
+         * contains forceInclude(...) 0xd8774d5a, nor either of the other
+         * plausible spellings that carry an extra bytes32 or a TimeBounds
+         * tuple. So the v3.1.0 verification does generalise backwards - but
+         * that is a checked fact, not an assumption.
+         */
         ref: {
           address: "0x1c479675ad559DC151F6Ec7ed3FbF8ceE79582B6" as Address,
           // Cross-referenced both ways: this contract's bridge() returns the
