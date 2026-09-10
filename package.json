@@ -14,7 +14,8 @@
     "snapshot": "tsx src/cli/verify.ts --json",
     "run": "tsx src/cli/run.ts",
     "export": "tsx src/cli/export.ts",
-    "resume": "tsx src/cli/resume.ts"
+    "resume": "tsx src/cli/resume.ts",
+    "index-mainnet": "tsx src/cli/index-mainnet.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

@@ -13,3 +13,6 @@ data/export_manifest.json
 # Python build output
 __pycache__/
 *.pyc
+
+# Scan logs from the mainnet indexer
+data/*.log
