@@ -105,7 +105,7 @@ construct + sign L2 tx (correct L2 chainId, nonce, gas)
   -> message sits in the DELAYED INBOX accumulator
   -> [healthy sequencer reads and includes it, typically ~10 min]
   -> [if not: wait delaySeconds / delayBlocks]
-  -> L1 tx: SequencerInbox.forceInclude(...)   <-- USER ACTION, anyone may call
+  -> L1 tx: SequencerInbox.forceInclusion(...)   <-- USER ACTION, anyone may call
   -> emits SequencerBatchDelivered
   -> tx executes on L2
 ```
@@ -141,7 +141,7 @@ blocks (~30 min) on Arbitrum One.
 > the failure and find the current getter rather than hardcoding a plausible number.
 
 **Tooling.** `@arbitrum/sdk` `InboxTools` wraps this: `signChildTx` / `sendChildSignedTx`,
-`getForceIncludableEvent`, `forceInclude`. Use it for the submission leg; do your own event
+`getForceIncludableEvent`, `forceInclusion`. Use it for the submission leg; do your own event
 indexing so you control the timestamps.
 
 ### 4.2 OP Stack (OP Sepolia, Base Sepolia)
@@ -187,7 +187,7 @@ for both OP Mainnet and Base.
 
 | | Arbitrum Nitro | OP Stack |
 |---|---|---|
-| User force call | **yes** — `forceInclude` | **no** |
+| User force call | **yes** — `forceInclusion` | **no** |
 | Censorship precondition | yes — delay must elapse | no |
 | L1 transactions required | **2** (enqueue, then force) | **1** (deposit) |
 | Worst-case bound | 24h base, **30 min floor** under sustained censorship (BoLD) | 12h sequencing window |
@@ -305,7 +305,7 @@ dedicated congestion campaign if B's natural fee variation turns out to be too n
 
 **Cost**
 - `M-C1` L1 gas used × effective gas price for the submission tx
-- `M-C2` L1 gas for the `forceInclude` call *(Arbitrum only; structurally absent on OP)*
+- `M-C2` L1 gas for the `forceInclusion` call *(Arbitrum only; structurally absent on OP)*
 - `M-C3` **total cost of the L2 transaction, including its data-availability
   component.** Not "L2 execution gas" — that description was wrong for the OP Stack and
   understated it by ~45% on a measured transfer. The two protocols charge for data
@@ -399,7 +399,7 @@ pretending to distributional precision.
 
 **Classification scheme — only Class A supports strong claims.**
 
-**Class A — confirmed forced inclusion.** A successful `SequencerInbox.forceInclude()` call
+**Class A — confirmed forced inclusion.** A successful `SequencerInbox.forceInclusion()` call
 on Arbitrum One. Unambiguous: the function exists for exactly one purpose and nobody calls
 it by accident. Also Class A: dYdX v3 escape-hatch invocations (freeze → initialize →
 finalize → withdraw with Merkle proof).
@@ -415,7 +415,7 @@ study. Report OP deposits as *mechanism usage*, never as censorship.
 
 **Class D — unknown.** Insufficient evidence. Report the count; do not force a label.
 
-**Indexing targets:** Arbitrum One SequencerInbox — `forceInclude` calls and
+**Indexing targets:** Arbitrum One SequencerInbox — `forceInclusion` calls and
 `SequencerBatchDelivered`; Bridge — `MessageDelivered`. OP Mainnet/Base OptimismPortal —
 `TransactionDeposited`. dYdX v3 — reconstruct from the open-source `l2beat/starkex-explorer`.
 
@@ -469,7 +469,7 @@ CREATE TABLE runs (
   gas_limit      TEXT,
   calldata_bytes INTEGER,
   l1_tx_hash     TEXT,                  -- submission tx (forced path)
-  l1_force_hash  TEXT,                  -- forceInclude tx (Arbitrum only)
+  l1_force_hash  TEXT,                  -- forceInclusion tx (Arbitrum only)
   l2_tx_hash     TEXT,
   outcome        TEXT NOT NULL,         -- success | failed | timeout | pending
   retry_count    INTEGER NOT NULL DEFAULT 0,
@@ -497,7 +497,7 @@ CREATE TABLE costs (
   l1_gas_used  TEXT,
   l1_gas_price TEXT,
   l1_fee_wei   TEXT,
-  force_gas_used  TEXT,                 -- Arbitrum forceInclude leg
+  force_gas_used  TEXT,                 -- Arbitrum forceInclusion leg
   force_fee_wei   TEXT,
   l2_gas_used  TEXT,
   l2_fee_wei   TEXT,
@@ -589,7 +589,7 @@ export interface ProtocolAdapter {
 
   /**
    * Protocol-specific completion action.
-   * Arbitrum: forceInclude after the delay. OP Stack: no-op (automatic).
+   * Arbitrum: forceInclusion after the delay. OP Stack: no-op (automatic).
    * Returning null is meaningful data, not a stub - it is M-U1.
    */
   completeForced(ref: SubmissionRef): Promise<SubmissionRef | null>;
@@ -615,7 +615,7 @@ unavailable. Never force a stage onto a protocol that lacks it:
 | S3 L1 inclusion of submission | L1 block | L1 block |
 | S4 protocol queue entry | L1 event (`InboxMessageDelivered`) | L1 event (`TransactionDeposited`) |
 | S5 force eligibility | L1 block + delay *(computed)* | **n/a — no such stage** |
-| S6 force action | L1 block (`forceInclude`) | **n/a** |
+| S6 force action | L1 block (`forceInclusion`) | **n/a** |
 | S7 L2 appearance | L2 block | L2 block |
 | S8 L2 execution | L2 receipt | L2 receipt |
 | S9 L1 finality | L1 finalized | L1 finalized |
@@ -643,18 +643,33 @@ git submodule update --init --recursive
 binary. The clean, reproducible method is to disable the sequencer's delayed-message reader,
 so that a transaction submitted **only** via the delayed inbox is genuinely never picked up:
 
-1. Deploy the rollup with a **shortened `delaySeconds`** (e.g. 300s instead of 86400s) so
-   the force window is reachable in a test run. This is a deployment parameter — record it
-   in `param_snapshots` and never compare devnet absolute latencies to testnet ones.
+1. Shorten **`delayBlocks`** — *not* `delaySeconds` — so the force window is reachable in a
+   test run. `delaySeconds` is inert for the force path; see §20.1. `delayBlocks` is not a
+   deployment parameter either: `scripts/rollupCreation.ts` hardcodes the whole
+   `MaxTimeVariation` struct, so it must be changed **after** deployment via
+   `SequencerInbox.setMaxTimeVariation(...)`, which is `onlyRollupOwner`. On nitro-testnode
+   `rollup.owner()` is the **UpgradeExecutor**, not the `l2owner` EOA, so the call routes
+   `l2owner EOA → UpgradeExecutor.executeCall(sequencerInbox, calldata)`; `l2owner` holds
+   `EXECUTOR_ROLE`. `_setMaxTimeVariation` bounds each field only above (`uint64`), with no
+   lower bound. Record the value in `param_snapshots` and never compare devnet absolute
+   latencies to testnet ones.
 2. Start the sequencer with the delayed-sequencer component disabled, so it produces blocks
-   normally but never ingests delayed messages.
-   > **UNVERIFIED — resolve Day 5:** the exact Nitro flag. It is in the
-   > `--node.delayed-sequencer.*` family. Confirm against
-   > `OffchainLabs/nitro` `cmd/nitro` flag definitions for the version you run, and record
-   > the flag string in the README. Do not publish the flag name from memory.
+   normally but never ingests delayed messages. The flag is:
+
+   ```
+   --node.delayed-sequencer.enable      # default false; nitro-testnode sets it true
+   ```
+
+   **VERIFIED 2026-09-10** against `nitro v3.9.6-91bf578` — the running binary's own
+   `--help` inside the live `nitro-testnode-sequencer-1` container, not documentation. The
+   sequencer runs `--conf.file=/config/sequencer_config.json`, whose live contents include
+   `node.delayed-sequencer = {"enable": true}`; disabling means setting that to `false` (or
+   passing the flag as `=false`) and recreating the container. Batch posting is unaffected —
+   in this testnode the sequencer process posts batches itself, which is what makes the
+   result censorship rather than an outage.
 3. Submit the target tx **only** through `Inbox.sendL2Message`. Confirm via the L2 RPC that
    it does not appear.
-4. Wait out the shortened delay. Call `SequencerInbox.forceInclude`. Measure `M-L5`.
+4. Wait out the shortened delay. Call `SequencerInbox.forceInclusion`. Measure `M-L5`.
 5. Success detection: the L2 receipt exists and the state transition matches expectation.
 
 This satisfies the threat model precisely — the sequencer is live, producing blocks with
@@ -705,7 +720,7 @@ runner refuses to submit until both balances are present.
 4. Poll Arbitrum Sepolia for the L2 tx hash. On a healthy sequencer this lands in ~minutes
    via the delayed reader — **this is the auto-inclusion leg, not a force**. Label it
    correctly in the data.
-5. The `forceInclude` leg on public testnet requires waiting the full configured delay.
+5. The `forceInclusion` leg on public testnet requires waiting the full configured delay.
    Measure it on testnet only if the Sepolia `delaySeconds` turns out to be short; otherwise
    the force leg lives in E1. Decide on Day 2 once `maxTimeVariation()` is read.
 
@@ -751,7 +766,7 @@ number. Nonparametric tests appropriate to heavy-tailed data.
 descriptive with binomial CIs, not as a distribution.
 
 **6. "The forced path isn't equivalent to censorship recovery."**
-*Defense:* on Arbitrum they are the same code path — `forceInclude` exists solely for this.
+*Defense:* on Arbitrum they are the same code path — `forceInclusion` exists solely for this.
 On OP Stack there is no separate recovery path, which is itself the finding.
 *Remaining limitation:* E2's forced path is invoked without a censorship precondition.
 
@@ -767,7 +782,7 @@ appears as a visible discontinuity.
 *Remaining limitation:* results are a versioned snapshot. State the version in the abstract.
 
 **9. "Your mainnet dataset misclassifies deposits."**
-*Defense:* Class A requires a successful `forceInclude` call — mechanically unambiguous. OP
+*Defense:* Class A requires a successful `forceInclusion` call — mechanically unambiguous. OP
 deposits are Class C by construction and never support censorship claims.
 *Remaining limitation:* Class A may be very small. Reported honestly, with the smallness as
 a finding.
@@ -805,7 +820,7 @@ verified negative result — still publishable, but at a lower tier. Plan for it
 
 **Finding (measured 2026-09-07, feeds contributions 1 and 2) — the escape hatch is
 conditionally reachable.** Arbitrum Sepolia's `delaySeconds` is 86400, and because
-`forceInclude` only acts on delayed messages the sequencer has not yet read, a healthy
+`forceInclusion` only acts on delayed messages the sequencer has not yet read, a healthy
 sequencer consumes the message hours before it becomes force-eligible. So: **Arbitrum's
 escape hatch is only exercisable while the failure it protects against is actually
 occurring, and in production it is therefore effectively never exercised.**
@@ -871,7 +886,7 @@ demonstrated recovery. Publishable at a workshop or IEEE ICBC.
 real effect, live BoLD buffer parameters captured across runs, and the dYdX v3
 reconstruction from primary on-chain data.
 
-**Exceptional paper.** Any *failure mode discovery*: `forceInclude` reverting under a
+**Exceptional paper.** Any *failure mode discovery*: `forceInclusion` reverting under a
 reachable condition; a stated bound not being met in practice; the H5 inversion confirmed
 empirically; or a rollup whose advertised escape hatch does not function as documented. Do
 not plan on this — but instrument for it, and record every anomaly rather than filtering it.
@@ -904,7 +919,7 @@ the block and second bounds agree). The post-BoLD signature is intact — the re
 fail, so no fallback was needed.
 
 **This does not merely make the testnet force leg impractical. It makes it structurally
-impossible, and no amount of waiting fixes it.** `forceInclude` can only act on delayed
+impossible, and no amount of waiting fixes it.** `forceInclusion` can only act on delayed
 messages the sequencer has *not yet read*. A healthy Arbitrum Sepolia sequencer reads the
 delayed inbox voluntarily in roughly ten minutes, advancing `totalDelayedMessagesRead` past
 our message long before the 24-hour window opens. By the time the message is force-eligible
@@ -932,6 +947,74 @@ Two consequences for the harness, both to be stated rather than discovered later
    `M-L2` was defined for. The comparison gets stronger, not weaker — but it is a
    comparison of auto-inclusion paths, and calling it a forced-path comparison would be
    wrong (see I4).
+
+**`forceInclusion` gates on `delayBlocks` only — `delaySeconds` is inert for the force
+path.** Verified 2026-09-10 by reading `src/bridge/SequencerInbox.sol` from inside the
+`rollupcreator` image that performed the devnet deployment (`@arbitrum/nitro-contracts`
+v3.1.0). The sole guard is:
+
+```solidity
+if (l1BlockAndTime[0] + delayBlocks_ >= block.number) revert ForceIncludeBlockTooSoon();
+```
+
+`delaySeconds` appears nowhere in `forceInclusion`. Its only live use is constructing
+`TimeBounds` for the batch data hash. **`ForceIncludeTimeTooSoon` does not exist anywhere in
+v3.1.0** — `Error.sol` declares only `ForceIncludeBlockTooSoon`. Older nitro-contracts
+checked both bounds; the delay-buffer rewrite dropped the seconds check.
+
+This corrects the standing description of the mechanism throughout this document. On
+Arbitrum Sepolia it does not change the *number* — `delayBlocks = 7200` at 12s is the same
+24h as `delaySeconds = 86400` — but it changes which parameter is the lever, and on the
+devnet, where L1 blocks are ~1s, the two disagree by two orders of magnitude. Any
+description of E1 as "shortening the 24-hour delay" via `delaySeconds` would misdescribe
+what was done.
+
+Note also that the external function is **`forceInclusion`**, not `forceInclude`. The two
+names produce different 4-byte selectors (`0xf1981578` vs `0xd8774d5a`); verified against
+the devnet, Arbitrum Sepolia and Arbitrum One implementations, all three of which expose
+only the former.
+
+**The BoLD delay buffer, and what the "~30 minute floor" actually describes.** The buffer
+reduces the force window: the effective gate is `min(bufferBlocks, delayBlocks)`
+(`delayBufferableBlocks`, `SequencerInbox.sol:759`). Depletion saturates at `threshold`, so
+`threshold` *is* the floor — **denominated in L1 blocks, not in time.** A duration only
+exists once a block time is supplied, and the figure is meaningless without naming the
+deployment it came from:
+
+| Deployment | `threshold` | Floor at that chain's L1 block time |
+|---|---|---|
+| Arbitrum One (per Arbitrum docs) | 150 blocks | ~30 min at 12s |
+| nitro-testnode devnet (measured) | 600 blocks | ~10 min at the measured 1.003 s/block |
+
+Both are real values from different configurations. The error previously recorded here and
+in CLAUDE.md §5 was stating "~30 minutes" without naming which. **Measured devnet values,
+read on-chain from `SequencerInbox.buffer()` at `0x60FFA00eaC35597FAAb2b2B5926e5b0CddF5700c`
+at L1 block 2086, 2026-09-10:** `bufferBlocks = 14400`, `max = 14400`, `threshold = 600`,
+`replenishRateInBasis = 500` (5% per block), `prevBlockNumber = 1916`,
+`prevSequencedBlockNumber = 1946`. `bufferBlocks == max` means no depletion has ever
+occurred on this devnet. There is **no `bufferConfig()` getter** — the state is the public
+struct variable `buffer` (line 129), and its field order (`BufferData`) differs from the
+`BufferConfig` struct passed at deployment, so reading it with the config layout silently
+transposes `max` and `threshold`.
+
+**Finding: buffer depletion is retroactive, so BoLD cannot protect against a first
+incident.** `buffer.bufferBlocks` is written only by `DelayBuffer.update()`, called from
+exactly two sites: `delayProofImpl` (on a batch post that reads new delayed messages) and
+`forceInclusion` itself. During a censorship window neither runs, so the stored buffer does
+not move. Nor does the live view show depletion: `calcPendingBuffer` derives
+`delay = prevSequencedBlockNumber - prevBlockNumber`, both frozen during the window and both
+describing the *previous* delayed message, while `elapsed` grows — so polling
+`forceInclusionDeadline` through a censorship window shows the buffer **replenishing**. The
+current incident's delay is registered only when `forceInclusion` executes, which sets
+`prevBlockNumber = msgBlock` and `prevSequencedBlockNumber = block.number`; that large
+`delay` depletes the buffer at the *next* update.
+
+**Round *n*'s censorship shortens the window for round *n+1*, never for itself.** BoLD's
+protection therefore cannot engage during a first incident, only during sustained ones. This
+is a sharper and more citable claim than H5 (the worst-case inversion), and it stands on the
+control flow alone — it holds whether or not H5 is ever demonstrated empirically. It also
+means a single-round E1 run measures forced-path latency and says nothing about the buffer;
+H5 requires ≥2 rounds and is properly reported as a depletion curve.
 
 **Hard stop conditions.** A protocol that cannot produce a reproducible forced-path
 measurement after **5 working days** is removed, not debugged further. A mechanism that
@@ -1002,7 +1085,7 @@ inclusion. In parallel, clone and boot `nitro-testnode` (`./test-node.bash --ini
 *Do:* redeploy the local rollup with a shortened `delaySeconds` (~300s). Identify and
 confirm the Nitro flag that disables the delayed-message reader. Submit a tx *only* via the
 delayed inbox; verify via the L2 RPC that it does **not** appear. Wait out the delay. Call
-`forceInclude`. Verify the tx now executes.
+`forceInclusion`. Verify the tx now executes.
 *Exit:* **one verified recovery from genuine refusal.** If this fails, escalate today — do
 not roll it into Day 7.
 
