@@ -27,6 +27,21 @@ from nonparametric import clopper_pearson, mann_whitney_u
 BOOTSTRAP_SEED = 20260827
 BOOTSTRAP_RESAMPLES = 10_000
 
+#: Below this, no bootstrap CI is reported - only the point estimate.
+#:
+#: A percentile interval from a handful of samples is bounded by those samples
+#: by construction. At n=2 the bootstrap median can only take three values, so
+#: the "interval" is just the two observations; it renders like a confidence
+#: interval and a reader will read it as one, which is worse than printing
+#: nothing. Coverage of the percentile bootstrap for a median is unreliable well
+#: above that too.
+#:
+#: 8 is a judgement call, not a derived quantity. It is set where the bootstrap
+#: median has enough distinct attainable values for the tails to mean something,
+#: and deliberately on the conservative side: suppressing a CI costs a reader
+#: nothing, while printing a meaningless one misleads.
+MIN_BOOTSTRAP_N = 8
+
 
 @dataclass
 class MedianCI:
@@ -61,6 +76,11 @@ class MedianCI:
     def __str__(self) -> str:
         if self.median is None:
             return f"median n/a (n_used={self.n_used}/{self.n_total}) {self.note}".strip()
+        if self.lo is None or self.hi is None:
+            return (
+                f"median {self._fmt(self.median)} "
+                f"[{self.note}] (n_used={self.n_used}/{self.n_total})"
+            )
         hw = "" if self.half_width_frac is None else f", half-width {self.half_width_frac:.1%} of median"
         return (
             f"median {self._fmt(self.median)} [{self._fmt(self.lo)}, {self._fmt(self.hi)}] "
@@ -148,9 +168,17 @@ def median_ci(
     x = _clean(series)
     if x.size == 0:
         return MedianCI(None, None, None, total, 0, confidence, None, "no observations")
-    if x.size == 1:
-        m = float(np.median(x))
-        return MedianCI(m, m, m, total, 1, confidence, None, "n=1: interval is the point itself")
+    if x.size < MIN_BOOTSTRAP_N:
+        return MedianCI(
+            float(np.median(x)),
+            None,
+            None,
+            total,
+            int(x.size),
+            confidence,
+            None,
+            f"CI suppressed, n too small (n={x.size} < {MIN_BOOTSTRAP_N})",
+        )
 
     rng = np.random.default_rng(BOOTSTRAP_SEED)
     idx = rng.integers(0, x.size, size=(resamples, x.size))
@@ -282,3 +310,65 @@ def decompose_costs(df: pd.DataFrame, cell: str, protocol: str) -> Decomposition
             else:
                 d.shares[label] = float(Decimal(val) / Decimal(total))
     return d
+
+
+@dataclass
+class SampleSize:
+    """Smallest n meeting the precision target, found by resampling the pilot."""
+
+    achieved: int | None
+    half_width_frac: float | None
+    pilot_n: int
+    pilot_half_width_frac: float | None
+    target: float
+    searched_to: int
+    note: str = ""
+
+
+def required_n(
+    series: pd.Series,
+    target: float = 0.10,
+    candidates: list[int] | None = None,
+    trials: int = 41,
+    resamples: int = 2_000,
+) -> SampleSize:
+    """Smallest n whose bootstrap CI half-width falls within ``target`` of the median.
+
+    BLUEPRINT section 10 sets n by simulation rather than by formula, precisely
+    because inclusion latency has no assumed distribution to plug into one. The
+    procedure is: draw a synthetic sample of size n from the pilot data with
+    replacement, bootstrap THAT to get a CI, take its half-width as a fraction
+    of the median, and repeat. The reported half-width per n is the median over
+    trials, so one unlucky draw does not decide the answer.
+
+    This inherits the pilot's shape, including its tail. If the pilot missed a
+    rare slow case, this will understate the n needed - which is why the pilot's
+    own achieved precision is reported alongside.
+    """
+    x = _clean(series)
+    pilot_n = int(x.size)
+    if pilot_n < MIN_BOOTSTRAP_N:
+        return SampleSize(None, None, pilot_n, None, target, 0, f"pilot too small (n={pilot_n})")
+
+    pilot_ci = median_ci(series)
+    cands = candidates or [5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 125, 150, 200, 250, 300, 400, 500]
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+
+    for n in cands:
+        fracs = []
+        for _ in range(trials):
+            synth = rng.choice(x, size=n, replace=True)
+            idx = rng.integers(0, n, size=(resamples, n))
+            meds = np.median(synth[idx], axis=1)
+            lo, hi = np.quantile(meds, [0.025, 0.975])
+            m = float(np.median(synth))
+            if m == 0:
+                continue
+            fracs.append(float((hi - lo) / 2.0 / abs(m)))
+        if not fracs:
+            continue
+        typical = float(np.median(fracs))
+        if typical <= target:
+            return SampleSize(n, typical, pilot_n, pilot_ci.half_width_frac, target, cands[-1])
+    return SampleSize(None, None, pilot_n, pilot_ci.half_width_frac, target, cands[-1],
+                      "target not reached within the searched range")
