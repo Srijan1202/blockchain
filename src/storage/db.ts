@@ -61,6 +61,18 @@ export function runMigrations(db: DatabaseHandle): string[] {
   return justApplied;
 }
 
+/**
+ * Open for reading only. Never migrates, never sets a PRAGMA, never writes.
+ *
+ * Export must be safe to run while a campaign is mid-flight. SQLite in WAL mode
+ * lets readers and a writer coexist, but only if the reader genuinely does not
+ * write - openDb() sets journal_mode and would migrate, either of which can
+ * touch a database another process is actively using.
+ */
+export function openDbReadOnly(dbPath: string = process.env.DB_PATH ?? DEFAULT_DB_PATH): DatabaseHandle {
+  return new Database(dbPath, { readonly: true, fileMustExist: true });
+}
+
 /** Open and migrate in one step. */
 export function initDb(dbPath?: string): DatabaseHandle {
   const db = openDb(dbPath);
