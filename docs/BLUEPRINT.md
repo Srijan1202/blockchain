@@ -444,8 +444,42 @@ archive depth or a usable `getLogs` span, rarely both).
 **Class A = 0 in 101,111 consecutive batches.** Exact binomial (Clopper–Pearson) 95% CI on
 the rate: **[0, 3.65 × 10⁻⁵]**. Stated the way it should be quoted: *no forced inclusion
 occurred in one million L1 blocks (~139 days), and the data is consistent with a true rate
-as high as roughly one per 27,000 batches.* Zero observed is not zero possible, and the
-scanned window is ~10% of Nitro-era history — full coverage needs a paid archive endpoint.
+as high as roughly one per 27,000 batches.* Zero observed is not zero possible.
+
+### 12.2 Attempt to extend to full Nitro-era history (2026-09-11)
+
+The window above is **1,000,000 of 10,537,989 Nitro-era blocks = 9.5%**. An attempt to cover
+the rest established two things worth keeping and did not widen the denominator.
+
+**Verified: one address and one selector cover all of Nitro-era history.** This had to be
+checked, because the surrounding contracts did change.
+
+- *Address is stable.* `bridge.sequencerInbox()` returns `0x1c479675…82B6` at all ten blocks
+  sampled from 15,411,100 to 25,949,044. The proxy first has code at **block 15,411,056
+  (2022-08-25)**, which is the correct floor for "Nitro-era" — slightly earlier than the
+  15,447,000 used in §12.1's scans.
+- *But the Rollup address is not.* `0x4DCeB440…DCfc0` first has code only at block
+  **21,830,860** (the BoLD upgrade). Resolving the inbox via `rollup()` would have silently
+  missed everything before that. Resolve via the **Bridge**, not the Rollup.
+- *Selector is stable across five implementations.* `0xbe04Ab27…A317`, `0x16242595…2875`,
+  `0xD03bFe2C…B2d9`, `0x31DA64D1…2cf7`, `0x98a58ADA…32c7` — **all five** contain
+  `0xf1981578` in their dispatch tables, and **none** contains `forceInclude(...)`
+  `0xd8774d5a` or the other plausible spellings. The v3.1.0 verification generalises
+  backwards, as a checked fact rather than an assumption.
+
+**Not achieved: full coverage.** Both enumeration routes are blocked on free infrastructure.
+
+| Route | Outcome |
+|---|---|
+| Etherscan v2 `txlist` | requires an API key; none available |
+| Blockscout `txlist` | works, but the public instance returns HTTP 429 under sustained use (persisted across 45 s backoffs); one page is ~20 MB, and ~133 pages would be needed for 1,333,720 transactions |
+| Blockscout v2 `method=` filter | **silently broken — do not use.** Returns 0 items for `0x3e5aa082`, a selector directly observed on this address moments earlier, and 0 for the method *name* too. A naive use would have produced a confident, entirely fake "zero Class A". |
+| drpc archive `getLogs` | works, and produced §12.1, but throughput collapses under sustained use; a 700,000-block range ran >30 min without completing |
+
+**So the Class A denominator remains 101,111 batches over 1,000,000 blocks.** Extending it
+needs a paid archive endpoint or an Etherscan key; the indexer already accepts any range, so
+this is an infrastructure cost, not further engineering. The claim in §12.1 must not be
+restated as "across all history" until that is done.
 
 **Sharper still: zero kind-3 messages.** Of 2,646 `MessageDelivered` events, **not one was
 `L2_MSG` (kind 3)** — the delayed-inbox path a user takes to bypass the sequencer. The
