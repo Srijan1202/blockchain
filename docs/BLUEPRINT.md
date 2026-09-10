@@ -305,7 +305,10 @@ dedicated congestion campaign if B's natural fee variation turns out to be too n
 
 **Cost**
 - `M-C1` L1 gas used × effective gas price for the submission tx
-- `M-C2` L1 gas for the `forceInclusion` call *(Arbitrum only; structurally absent on OP)*
+- `M-C2` L1 gas for the `forceInclusion` call *(Arbitrum only; structurally absent on OP)*.
+  **Not a per-message cost** — one call includes every queued message up to the requested
+  index, so `M-C2` must always be recorded with the number of messages that call swept in.
+  See §20.1, "Forcing is a batch operation."
 - `M-C3` **total cost of the L2 transaction, including its data-availability
   component.** Not "L2 execution gas" — that description was wrong for the OP Stack and
   understated it by ~45% on a measured transfer. The two protocols charge for data
@@ -1015,6 +1018,39 @@ is a sharper and more citable claim than H5 (the worst-case inversion), and it s
 control flow alone — it holds whether or not H5 is ever demonstrated empirically. It also
 means a single-round E1 run measures forced-path latency and says nothing about the buffer;
 H5 requires ≥2 rounds and is properly reported as a depletion curve.
+
+**Finding: forcing is a batch operation, so the user does not control what they pay for.**
+`forceInclusion` takes `_totalDelayedMessagesRead` — a count to read *up to*, not a message
+id — and includes **every** delayed message queued ahead of the caller's own. There is no
+variant that includes one message selectively.
+
+Measured on E1, 2026-09-10: forcing a single `L2_MSG` at index 106 moved
+`totalDelayedMessagesRead` from **102 to 107**. One call, five messages included — the
+user's own plus four batch-posting reports that had accumulated unread while the sequencer
+was censoring. **`M-C2` for that run is 117,759 gas covering five messages, not one.**
+
+Three consequences, in increasing order of importance:
+
+1. **`M-C2` is not a per-message cost and must never be pooled across runs without its
+   batch size.** Two runs whose `forceInclusion` swept 1 and 50 messages are not samples of
+   the same quantity. The schema should carry the swept count alongside the gas.
+2. **The cost of exercising the escape hatch is set by queue depth ahead of the user, which
+   they can neither observe in advance nor control.** At submission time the user cannot
+   know what will accumulate before their window opens; on Arbitrum the queue fills with
+   batch-posting reports precisely *because* the sequencer is misbehaving. The censorship
+   that makes the hatch necessary is the same thing that makes it more expensive.
+3. **This is adversarially exploitable and cheaply so.** Anyone can enqueue delayed messages
+   at ordinary L1 cost, and every one of them is prepended to the bill of the next user who
+   forces. The escape hatch's *advertised* guarantee is unconditional inclusion; its
+   *realised* price is set by an unbounded quantity under an adversary's influence. A
+   griefing attack does not need to block the hatch, only to make using it expensive enough
+   that nobody does.
+
+The mirrored, more favourable reading is also true and worth stating: forcing is a public
+good with a free-rider structure. Whoever forces first pays for everyone queued ahead of
+them, and the marginal cost per message falls as the queue grows. Which of the two readings
+dominates is an empirical question about queue depth, which §12's mainnet indexing can
+answer directly — count messages swept per historical `forceInclusion` call.
 
 **Hard stop conditions.** A protocol that cannot produce a reproducible forced-path
 measurement after **5 working days** is removed, not debugged further. A mechanism that

@@ -45,7 +45,7 @@ export interface TxSpec {
 
 /**
  * What a submission returns. Both hashes can be present on the forced path:
- * l1TxHash is the enqueue, l1ForceHash the Arbitrum forceInclude leg. On OP
+ * l1TxHash is the enqueue, l1ForceHash the Arbitrum forceInclusion leg. On OP
  * Stack l1ForceHash is always null, which is the M-U1 measurement, not a gap.
  */
 export interface SubmissionRef {
@@ -124,7 +124,7 @@ export interface CostRecord {
   l1GasUsed: bigint | null;
   l1GasPrice: bigint | null;
   l1FeeWei: bigint | null;
-  /** Arbitrum forceInclude leg only; structurally absent on OP Stack (M-C2). */
+  /** Arbitrum forceInclusion leg only; structurally absent on OP Stack (M-C2). */
   forceGasUsed: bigint | null;
   forceFeeWei: bigint | null;
   l2GasUsed: bigint | null;

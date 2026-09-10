@@ -408,7 +408,7 @@ export interface ProtocolAdapter {
 
   /**
    * Protocol-specific completion action.
-   * Arbitrum: forceInclude after the delay.
+   * Arbitrum: forceInclusion after the delay.
    * OP Stack: returns null — inclusion is automatic.
    * Returning null is MEANINGFUL DATA (metric M-U1), not an unimplemented stub.
    */
@@ -431,7 +431,7 @@ Stage map — encode this, do not invent stages a protocol lacks:
 | S3 | L1 inclusion of submission | l1_block | l1_block |
 | S4 | protocol queue entry | `InboxMessageDelivered` | `TransactionDeposited` |
 | S5 | force eligibility | computed (inferred) | **not supported** |
-| S6 | force action | `forceInclude` (l1_block) | **not supported** |
+| S6 | force action | `forceInclusion` (l1_block) | **not supported** |
 | S7 | L2 appearance | l2_block | l2_block |
 | S8 | L2 execution | l2_block | l2_block |
 | S9 | L1 finality | l1_block | l1_block |
@@ -508,7 +508,7 @@ Per-stage timeouts; a timeout writes `outcome = 'timeout'` and stops — it does
   Ethereum Sepolia. Emit S2, S3, S4 (`InboxMessageDelivered`).
 - S5 (force eligibility) is **computed** from the live `delaySeconds` — mark
   `confidence: 'inferred'`, never `'observed'`.
-- `completeForced`: call `SequencerInbox.forceInclude(...)`. Emit S6. **If it reverts,
+- `completeForced`: call `SequencerInbox.forceInclusion(...)`. Emit S6. **If it reverts,
   record the revert reason as an outcome — this is potentially the paper's most valuable
   result. Never swallow it.**
 - `track`: poll Arbitrum Sepolia for the L2 tx; emit S7, S8, then S9.
@@ -523,7 +523,7 @@ Per-stage timeouts; a timeout writes `outcome = 'timeout'` and stops — it does
 - Auto-inclusion (S7 without S6) is distinguishable from forced inclusion (S6 then S7).
 - `delaySeconds` is read live, never hardcoded.
 
-**Commit:** `feat(protocols): Arbitrum delayed-inbox and forceInclude adapter`
+**Commit:** `feat(protocols): Arbitrum delayed-inbox and forceInclusion adapter`
 
 ---
 
@@ -581,10 +581,10 @@ manifest present.
 
 **Spec**
 
-- Index Arbitrum One SequencerInbox `forceInclude` calls and `SequencerBatchDelivered`;
+- Index Arbitrum One SequencerInbox `forceInclusion` calls and `SequencerBatchDelivered`;
   Bridge `MessageDelivered`. Index OP Mainnet + Base OptimismPortal `TransactionDeposited`.
 - Classification, strictly:
-  - **Class A** — a *successful* `forceInclude` call. Unambiguous.
+  - **Class A** — a *successful* `forceInclusion` call. Unambiguous.
   - **Class B** — a delayed message not read within the normal window, later batched.
   - **Class C** — OP `TransactionDeposited` from the standard bridge, and normal inclusions.
   - **Class D** — insufficient evidence.
