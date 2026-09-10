@@ -2,11 +2,11 @@ import { keccak256, type Address, type Hex } from "viem";
 import { L2_MESSAGE_TYPE } from "./abi.js";
 
 /**
- * Delayed-inbox mechanics and the forceInclude leg.
+ * Delayed-inbox mechanics and the forceInclusion leg.
  *
  * VALIDATED read-only against Arbitrum Sepolia (2026-09-07):
  *   - messageDataHash == keccak256(messageData), confirmed on 5 real
- *     MessageDelivered events. Getting this wrong makes forceInclude revert.
+ *     MessageDelivered events. Getting this wrong makes forceInclusion revert.
  *   - an L2 transaction hash is keccak256 of its signed serialization,
  *     confirmed on 3 real Arbitrum Sepolia transactions. That is why
  *     submitForced knows the L2 hash at signing time, before submitting.
@@ -30,13 +30,13 @@ export function l2TxHashOf(signedTx: Hex): Hex {
   return keccak256(signedTx);
 }
 
-/** messageDataHash as the Bridge computes it, and as forceInclude expects it. */
+/** messageDataHash as the Bridge computes it, and as forceInclusion expects it. */
 export function messageDataHashOf(messageData: Hex): Hex {
   return keccak256(messageData);
 }
 
 /**
- * Everything forceInclude() needs about the queued message.
+ * Everything forceInclusion() needs about the queued message.
  *
  * These come from the Bridge's MessageDelivered event plus the L1 block that
  * carried it. They cannot be reconstructed from the Inbox event alone.
@@ -63,7 +63,7 @@ export interface ForceIncludeArgs {
 }
 
 /**
- * Build the forceInclude arguments for a queued message.
+ * Build the forceInclusion arguments for a queued message.
  *
  * `_totalDelayedMessagesRead` is the count to read UP TO, so it is the
  * message's index plus one: forcing message N means the sequencer inbox has
@@ -116,7 +116,7 @@ export function computeForceEligibility(
 /**
  * Whether the force leg can ever succeed in this environment.
  *
- * BLUEPRINT section 20.1: on a healthy public testnet it cannot. forceInclude
+ * BLUEPRINT section 20.1: on a healthy public testnet it cannot. forceInclusion
  * only acts on messages the sequencer has NOT yet read, but a healthy sequencer
  * reads the delayed inbox voluntarily in about ten minutes - hours before a
  * 24h window opens. The two conditions "delay elapsed" and "message still
@@ -143,7 +143,7 @@ export function assessForceReachability(
   return {
     reachable: false,
     reason:
-      `${environment}: forceInclude only acts on messages the sequencer has not yet read, but a healthy ` +
+      `${environment}: forceInclusion only acts on messages the sequencer has not yet read, but a healthy ` +
       `sequencer reads the delayed inbox in ~10 minutes while delaySeconds is ${delaySeconds} ` +
       `(~${Number(delaySeconds) / 3600}h). The message will have been auto-included long before it becomes ` +
       `force-eligible, so the call cannot succeed. This is structural, not a timing problem - see BLUEPRINT 20.1.`,

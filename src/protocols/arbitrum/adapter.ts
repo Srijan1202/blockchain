@@ -35,7 +35,7 @@ import {
  * that difference is the M-U1 metric:
  *
  *   1. Inbox.sendL2Message(0x04 || signedL2Tx)   - queue it in the delayed inbox
- *   2. SequencerInbox.forceInclude(...)          - force it in, once eligible
+ *   2. SequencerInbox.forceInclusion(...)          - force it in, once eligible
  *
  * Step 2 is only reachable when the sequencer has NOT already read the message.
  * On a healthy public testnet it always has, so completeForced refuses there
@@ -48,11 +48,11 @@ export interface ArbitrumAdapterOptions {
   stageTimeoutMs?: number;
 }
 
-/** Raised when forceInclude reverts. The reason is data (I6), never swallowed. */
+/** Raised when forceInclusion reverts. The reason is data (I6), never swallowed. */
 export class ForceIncludeRevert extends Error {
   readonly revertReason: string;
   constructor(revertReason: string) {
-    super(`forceInclude reverted: ${revertReason}`);
+    super(`forceInclusion reverted: ${revertReason}`);
     this.name = "ForceIncludeRevert";
     this.revertReason = revertReason;
   }
@@ -189,7 +189,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
   }
 
   /**
-   * Record that a force action happened for this run. Called when forceInclude
+   * Record that a force action happened for this run. Called when forceInclusion
    * is submitted and when track() observes S6.
    */
   markForceAction(runId: string): void {
@@ -336,11 +336,11 @@ export class ArbitrumAdapter implements ProtocolAdapter {
   }
 
   /**
-   * Call SequencerInbox.forceInclude once the delay has elapsed.
+   * Call SequencerInbox.forceInclusion once the delay has elapsed.
    *
    * Two things this must never do:
    *
-   *   1. Swallow a revert. A reverting forceInclude is potentially the most
+   *   1. Swallow a revert. A reverting forceInclusion is potentially the most
    *      valuable single result in this project - it would mean a documented
    *      escape hatch does not work as specified. The reason is extracted and
    *      thrown as ForceIncludeRevert for the caller to record as an outcome.
@@ -362,7 +362,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     if (!reach.reachable) {
       ctx.logger.warn(
         { chain: this.chainKey, environment: ctx.environment, delay_seconds: delaySeconds.toString() },
-        `refusing to attempt forceInclude - ${reach.reason}`,
+        `refusing to attempt forceInclusion - ${reach.reason}`,
       );
       throw new ForceUnreachable(reach.reason);
     }
@@ -378,7 +378,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     if (ctx.dryRun) {
       ctx.logger.info(
         { chain: this.chainKey, force_args: { ...args, l1BlockAndTime: args.l1BlockAndTime.map(String) } },
-        "dry run: forceInclude constructed, not sent",
+        "dry run: forceInclusion constructed, not sent",
       );
       return { ...ref, l1ForceHash: null };
     }
@@ -390,7 +390,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       await l1.simulateContract({
         address: this.sequencerInbox,
         abi: SEQUENCER_INBOX_ABI,
-        functionName: "forceInclude",
+        functionName: "forceInclusion",
         args: [args.totalDelayedMessagesRead, args.kind, args.l1BlockAndTime, args.baseFeeL1, args.sender, args.messageDataHash],
         account: this.account(),
       });
@@ -398,7 +398,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       const reason = extractRevertReason(err);
       ctx.logger.error(
         { chain: this.chainKey, revert_reason: reason, metric: "M-R2" },
-        "forceInclude REVERTED - recording as an outcome, not retrying. This is data.",
+        "forceInclusion REVERTED - recording as an outcome, not retrying. This is data.",
       );
       throw new ForceIncludeRevert(reason);
     }
@@ -407,7 +407,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       to: this.sequencerInbox,
       data: encodeFunctionData({
         abi: SEQUENCER_INBOX_ABI,
-        functionName: "forceInclude",
+        functionName: "forceInclusion",
         args: [args.totalDelayedMessagesRead, args.kind, args.l1BlockAndTime, args.baseFeeL1, args.sender, args.messageDataHash],
       }),
       chain: null,
@@ -415,7 +415,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
     this.markForceAction(ref.runId);
     ctx.logger.info(
       { chain: this.chainKey, run_id: ref.runId, l1_force_hash: hash, metric: "M-U1", user_initiated_l1_txs: 2 },
-      "forceInclude submitted - this is the second user-initiated L1 transaction",
+      "forceInclusion submitted - this is the second user-initiated L1 transaction",
     );
     return { ...ref, l1ForceHash: hash };
   }
@@ -527,7 +527,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
         yield makeEvent(ctx, "S6", "L1", "l1_block", "observed", {
           blockNumber: forceReceipt.blockNumber,
           blockTimestamp: forceBlock.timestamp,
-          rawRef: `forceInclude:${submission.l1ForceHash}`,
+          rawRef: `forceInclusion:${submission.l1ForceHash}`,
         });
       }
     }
@@ -542,7 +542,7 @@ export class ArbitrumAdapter implements ProtocolAdapter {
       { chain: this.chainKey, inclusion_path: path, environment: ctx.environment },
       path === "auto"
         ? "reached L2 without a force call: the sequencer read the delayed message voluntarily (auto-inclusion, NOT censorship recovery)"
-        : "reached L2 after forceInclude: genuine forced inclusion",
+        : "reached L2 after forceInclusion: genuine forced inclusion",
     );
 
     yield makeEvent(ctx, "S7", "L2", "l2_block", "observed", {

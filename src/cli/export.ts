@@ -290,7 +290,7 @@ function buildRows(db: DatabaseHandle): {
 
     // M_U1: user-initiated L1 transactions. Counted from what was actually
     // sent, not assumed from the protocol - 2 for a forced Arbitrum run that
-    // called forceInclude, 1 for one that was auto-included or for an OP
+    // called forceInclusion, 1 for one that was auto-included or for an OP
     // deposit, 0 on the normal path.
     row.M_U1 = (run.l1_tx_hash ? 1 : 0) + (run.l1_force_hash ? 1 : 0);
     const s7 = stages.get("S7");

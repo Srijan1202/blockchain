@@ -26,7 +26,7 @@ export const INBOX_ABI = [
 ] as const;
 
 /**
- * Bridge. MessageDelivered carries exactly the fields forceInclude() needs:
+ * Bridge. MessageDelivered carries exactly the fields forceInclusion() needs:
  * kind, sender, messageDataHash and baseFeeL1. Without this event the force
  * call cannot be constructed.
  */
@@ -49,8 +49,26 @@ export const BRIDGE_ABI = [
 
 export const SEQUENCER_INBOX_ABI = [
   {
+    /**
+     * The external name is `forceInclusion`, NOT `forceInclude`. The glossary
+     * name and the name this file carried until 2026-09-10 produce a different
+     * 4-byte selector, so the call hit the proxy fallback and reverted with no
+     * data. It never fired because BLUEPRINT 20.1 makes the force leg
+     * unreachable on healthy public testnets - E1 is the first place it runs.
+     *
+     * Verified per chain rather than assumed, since these are three separate
+     * deployments. For this argument list:
+     *   forceInclusion(...) = 0xf1981578   forceInclude(...) = 0xd8774d5a
+     * Resolved each proxy's EIP-1967 implementation and searched its dispatch
+     * table; corroborated with eth_call (0xf1981578 reverts DelayedBackwards(),
+     * i.e. it dispatches; 0xd8774d5a reverts with no data, i.e. it does not):
+     *   devnet           0x60FFA00eaC35597FAAb2b2B5926e5b0CddF5700c  impl 0xb075b82c7a23e0994dF4793422A1f03Dbcf9136F
+     *   Arbitrum Sepolia 0x6c97864CE4bEf387dE0b3310A44230f7E3F1be0D  impl 0xBBb2EF6dD70759F6c335c116895c6749ec7427da
+     *   Arbitrum One     0x1c479675ad559DC151F6Ec7ed3FbF8ceE79582B6  impl 0x98a58ADAb0f8A66A1BF4544d804bc0475dff32c7
+     * All three expose 0xf1981578 and none expose 0xd8774d5a.
+     */
     type: "function",
-    name: "forceInclude",
+    name: "forceInclusion",
     stateMutability: "nonpayable",
     inputs: [
       { name: "_totalDelayedMessagesRead", type: "uint256" },

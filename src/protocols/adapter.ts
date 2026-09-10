@@ -69,7 +69,7 @@ export const ARBITRUM_STAGES: StageMap = {
   S3: { meaning: "L1 inclusion of submission", chainLayer: "L1", clockSource: "l1_block", confidence: "observed", evidence: "L1 receipt" },
   S4: { meaning: "protocol queue entry", chainLayer: "L1", clockSource: "l1_block", confidence: "observed", evidence: "InboxMessageDelivered" },
   S5: { meaning: "force eligibility", chainLayer: "L1", clockSource: "l1_block", confidence: "inferred", evidence: "computed from live delaySeconds" },
-  S6: { meaning: "force action", chainLayer: "L1", clockSource: "l1_block", confidence: "observed", evidence: "SequencerInbox.forceInclude" },
+  S6: { meaning: "force action", chainLayer: "L1", clockSource: "l1_block", confidence: "observed", evidence: "SequencerInbox.forceInclusion" },
   S7: { meaning: "L2 appearance", chainLayer: "L2", clockSource: "l2_block", confidence: "observed", evidence: "L2 block" },
   S8: { meaning: "L2 execution", chainLayer: "L2", clockSource: "l2_block", confidence: "observed", evidence: "L2 receipt" },
   S9: { meaning: "L1 finality", chainLayer: "L1", clockSource: "l1_block", confidence: "observed", evidence: "L1 finalized" },
@@ -143,7 +143,7 @@ export interface ProtocolAdapter {
   /**
    * Protocol-specific completion action.
    *
-   * Arbitrum: SequencerInbox.forceInclude once the delay has elapsed.
+   * Arbitrum: SequencerInbox.forceInclusion once the delay has elapsed.
    * OP Stack: returns null - inclusion is automatic.
    *
    * DO NOT "FIX" THE NULL. It is not an unimplemented stub. It is the encoded

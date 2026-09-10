@@ -115,7 +115,7 @@ export const ARB_SEPOLIA: L2Config = {
   statedForcedBoundSource: null, // read live from SequencerInbox.maxTimeVariation()
   statedForcedBoundVerification: "runtime",
   notes:
-    "Forced path: Inbox.sendL2Message -> delayed inbox -> wait delay -> SequencerInbox.forceInclude. User action required.",
+    "Forced path: Inbox.sendL2Message -> delayed inbox -> wait delay -> SequencerInbox.forceInclusion. User action required.",
 };
 
 export const OP_SEPOLIA: L2Config = {
