@@ -9,3 +9,7 @@ dist/
 data/*.sqlite*
 data/*.csv
 data/export_manifest.json
+
+# Python build output
+__pycache__/
+*.pyc
