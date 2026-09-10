@@ -14,7 +14,7 @@ import type { RunPath } from "./types.js";
  *               answer will not change, the retry costs real testnet funds,
  *               and it corrupts the sample.
  *
- * A reverting forceInclude is potentially the single most valuable result in
+ * A reverting forceInclusion is potentially the single most valuable result in
  * this project. It must surface as an outcome, never be retried into silence
  * and never be swallowed.
  */

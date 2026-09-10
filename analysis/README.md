@@ -78,7 +78,7 @@ protocols, because only the OP Stack has a separable, differently-priced DA comp
 ### 4. Decompose within a protocol, not across
 
 Comparing only totals hides *why* a path costs what it does. `report.py` breaks the forced
-path into M_C1 (L1 submission), M_C2 (`forceInclude`, Arbitrum only) and M_C3 (the L2
+path into M_C1 (L1 submission), M_C2 (`forceInclusion`, Arbitrum only) and M_C3 (the L2
 transaction), with each component's share of the total.
 
 Read the caveats it prints. On **Arbitrum**, `M_C3` already contains its data-availability

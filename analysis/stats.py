@@ -281,7 +281,7 @@ def decompose_costs(df: pd.DataFrame, cell: str, protocol: str) -> Decomposition
         median_total_wei=median_wei(used["total_fee_wei"]) if len(used) else None,
     )
 
-    for label, col in (("L1 submission (M_C1)", "M_C1"), ("forceInclude (M_C2)", "M_C2"), ("L2 transaction (M_C3)", "M_C3")):
+    for label, col in (("L1 submission (M_C1)", "M_C1"), ("forceInclusion (M_C2)", "M_C2"), ("L2 transaction (M_C3)", "M_C3")):
         d.components[label] = median_wei(used[col]) if col in used.columns and len(used) else None
 
     if protocol == "op-stack":
