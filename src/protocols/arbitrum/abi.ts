@@ -100,12 +100,42 @@ export const SEQUENCER_INBOX_ABI = [
     ],
   },
   {
+    /**
+     * The FULL event, including the non-indexed tail. It previously stopped
+     * after the three indexed parameters, which is safe for reading topics but
+     * a trap for anything that filters: viem derives topic0 by hashing the
+     * signature it is given, and
+     *   SequencerBatchDelivered(uint256,bytes32,bytes32)
+     * hashes to a different value than the real
+     *   SequencerBatchDelivered(uint256,bytes32,bytes32,bytes32,uint256,(uint64,uint64,uint64,uint64),uint8)
+     * so a getLogs filter built from the short form silently matches nothing.
+     * Nothing used it that way, so no measurement was affected.
+     *
+     * Signature confirmed empirically against Arbitrum One mainnet logs: topic0
+     * 0x7394f4a19a13c7b92b5bb71033245305946ef78452f7b4986ac1390b5df4ebd7 with
+     * 4 topics and 224 bytes of data - exactly the 7 words below.
+     * Source: nitro-contracts src/bridge/ISequencerInbox.sol:28.
+     */
     type: "event",
     name: "SequencerBatchDelivered",
     inputs: [
       { name: "batchSequenceNumber", type: "uint256", indexed: true },
       { name: "beforeAcc", type: "bytes32", indexed: true },
       { name: "afterAcc", type: "bytes32", indexed: true },
+      { name: "delayedAcc", type: "bytes32", indexed: false },
+      { name: "afterDelayedMessagesRead", type: "uint256", indexed: false },
+      {
+        name: "timeBounds",
+        type: "tuple",
+        indexed: false,
+        components: [
+          { name: "minTimestamp", type: "uint64" },
+          { name: "maxTimestamp", type: "uint64" },
+          { name: "minBlockNumber", type: "uint64" },
+          { name: "maxBlockNumber", type: "uint64" },
+        ],
+      },
+      { name: "dataLocation", type: "uint8", indexed: false },
     ],
   },
 ] as const;

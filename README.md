@@ -16,9 +16,51 @@ npm run verify                                        # connectivity + live para
 npm run typecheck                                     # tsc --noEmit  (run after every task)
 npm run run -- --experiment B --chain arb-sepolia --n 25
 npm run export -- --out data/export.csv
+npm run index-mainnet -- --chain arbitrum-one --from 25449045 --to 25949044   # read-only mainnet history
 ```
 
 Copy `.env.example` to `.env` and fill in the RPC URLs before running anything.
+
+## Mainnet indexing (read-only)
+
+`npm run index-mainnet` reads mainnet history and classifies it per BLUEPRINT §12. It never
+signs or sends anything and loads no account.
+
+The block range is **mandatory and recorded**. A Class A count is not a rate without the
+window it was counted over, and §12 asks for a binomial CI, which needs that denominator to
+exist as data — so every scan writes a `mainnet_scans` row with its exact range, the RPC
+host (never the URL, so no API key reaches the dataset), whether it completed, and any
+coverage gaps.
+
+```bash
+npm run index-mainnet -- --chain arbitrum-one --from N --to M   # or --last 500000
+npm run index-mainnet -- --chain op-mainnet   --last 10000
+python analysis/mainnet.py --db data/bench.sqlite                # counts, CI, batch sizes
+```
+
+Useful flags: `--skip-messages` (SequencerInbox only — Class A lives entirely there, and it
+halves the requests), `--all-kinds` (index every delayed-message kind, not just kind 3
+`L2_MSG`), `--chunk` / `--throttle-ms`.
+
+### Picking an RPC — this is the hard part
+
+`RPC_ETH_MAINNET` needs two things at once that most free endpoints will not give together:
+**archive logs** and a **wide `eth_getLogs` range**. Measured 2026-09-11:
+
+| Endpoint | Archive depth | Max `getLogs` span |
+|---|---|---|
+| `ethereum-rpc.publicnode.com` | gated — recent blocks only | wide |
+| Alchemy free tier | yes | **10 blocks** |
+| `eth.drpc.org` | yes | 10,000 (2,000 is comfortable; 10,000 times out) |
+
+Pointing this at a testnet endpoint is refused outright: it would return an empty result set
+that looks exactly like the finding the study is trying to establish. The CLI checks
+`eth_chainId == 1` before scanning.
+
+**Run one scan at a time.** Several concurrent scans share the endpoint's rate limit and each
+one slows down — an easy mistake to make, and an easy one to misread as the provider
+throttling. `npm`/`tsx` spawn a bare `node`, so `pkill -f index-mainnet` does **not** match a
+running scan; kill it by PID.
 
 ## Funding
 

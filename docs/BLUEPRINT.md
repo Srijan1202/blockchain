@@ -428,6 +428,49 @@ is documented, is load-bearing in every security argument for these systems, and
 essentially never used." Report the count with a binomial CI and lean the mainnet section on
 dYdX. Do not manufacture volume by relaxing Class A.
 
+### 12.1 First measured result (T13, 2026-09-11)
+
+Read-only scan via `npm run index-mainnet`, all ranges recorded in `mainnet_scans` and
+disjoint per target. Endpoint `eth.drpc.org` (archive; free tiers elsewhere give either
+archive depth or a usable `getLogs` span, rarely both).
+
+| Chain | Target | Blocks | Events examined | A | B | C | D |
+|---|---|---|---|---|---|---|---|
+| Arbitrum One | SequencerInbox | 24,949,045–25,949,044 (1,000,000) | 101,111 batches | **0** | – | – | – |
+| Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
+| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
+| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
+
+**Class A = 0 in 101,111 consecutive batches.** Exact binomial (Clopper–Pearson) 95% CI on
+the rate: **[0, 3.65 × 10⁻⁵]**. Stated the way it should be quoted: *no forced inclusion
+occurred in one million L1 blocks (~139 days), and the data is consistent with a true rate
+as high as roughly one per 27,000 batches.* Zero observed is not zero possible, and the
+scanned window is ~10% of Nitro-era history — full coverage needs a paid archive endpoint.
+
+**Sharper still: zero kind-3 messages.** Of 2,646 `MessageDelivered` events, **not one was
+`L2_MSG` (kind 3)** — the delayed-inbox path a user takes to bypass the sequencer. The
+population was kind 13 batch-posting reports (2,066), kind 9 retryables (515) and kind 12 ETH
+deposits (45): the sequencer's own bookkeeping and the ordinary bridge. This reproduces the
+Arbitrum Sepolia result (§18: 0 of 25,617 messages over 17 days) on mainnet. The escape
+hatch is not lightly used; in these windows it is not used at all.
+
+**Class B = 0, and the delay data says why.** Observed read delays were min 34, median 56,
+max 94 L1 blocks against the inbox's own on-chain `buffer().threshold` of **150** — every
+message was read well inside the window the protocol itself calls expected. Nothing was
+lagging, so nothing qualifies. The boundary was read from chain, never chosen (I1).
+
+**Class D = 9, all boundary effects.** Nine messages sit at the very end of the range with no
+covering `SequencerBatchDelivered` inside it — their read event is simply past `toBlock`.
+They are held at D rather than assumed ordinary, which is the whole point of having a D.
+
+**The batch-size question stays open.** With no Class A events there is no mainnet
+distribution, so the griefing-versus-public-good reading in §20.1 is **not** decided.
+E1's single observation (102 → 107, five messages for one forcer) remains the only
+measurement, and n=1 on a devnet we controlled supports no generalisation. What can be said
+is that queue depth was consistently shallow in the observed window — the unread backlog sat
+at 1–2 messages — so a forcer during normal operation would sweep in very few. That is a
+statement about quiet conditions, and the mechanism only matters in unquiet ones.
+
 ---
 
 ## 13. DATA SCHEMA
