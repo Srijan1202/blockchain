@@ -1,0 +1,10 @@
+# Analysis stack. TypeScript produces data; Python produces results.
+pandas>=2.0
+matplotlib>=3.7
+numpy>=1.24
+
+# scipy is NOT required. Mann-Whitney U and Clopper-Pearson are implemented in
+# nonparametric.py and self-tested against published reference values, because
+# scipy.stats could not be imported in the environment this was written in (its
+# compiled extension is blocked by a Windows Application Control policy).
+# See analysis/README.md.

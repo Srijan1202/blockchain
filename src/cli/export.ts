@@ -113,11 +113,28 @@ interface StageRow {
 const STAGES: LifecycleStage[] = ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"];
 
 /** Metric -> the stage pair it spans. Every one is computed through clock.ts. */
-const LATENCY_METRICS: Array<{ id: string; from: LifecycleStage; to: LifecycleStage; note: string }> = [
-  { id: "M_L1", from: "S2", to: "S3", note: "submit -> L1 inclusion (mixed clock by construction)" },
-  { id: "M_L2", from: "S3", to: "S7", note: "L1 inclusion -> L2 appearance (the cross-protocol comparable)" },
-  { id: "M_L3", from: "S2", to: "S7", note: "total forced-path latency; equals M_L1 + M_L2" },
-  { id: "M_L4", from: "S1", to: "S8", note: "normal-path baseline" },
+const LATENCY_METRICS: Array<{
+  id: string;
+  from: LifecycleStage;
+  to: LifecycleStage;
+  /**
+   * Which path the metric is DEFINED for, or null for both.
+   *
+   * M-L3 is "total forced-path latency" and M-L4 is the "normal-path
+   * baseline" (BLUEPRINT section 9). Both stage pairs happen to exist on both
+   * paths - a normal run has S1, S2, S7 and S8 too - so computing them
+   * wherever the stages are present produced an M_L4 for forced runs and an
+   * M_L3 for normal ones. Those columns are meaningless under their own
+   * definitions, and pooling them would compare a forced-path latency against
+   * a column labelled "normal-path baseline". Gated by path instead.
+   */
+  path: "normal" | "forced" | null;
+  note: string;
+}> = [
+  { id: "M_L1", from: "S2", to: "S3", path: "forced", note: "submit -> L1 inclusion (mixed clock by construction)" },
+  { id: "M_L2", from: "S3", to: "S7", path: "forced", note: "L1 inclusion -> L2 appearance (the cross-protocol comparable)" },
+  { id: "M_L3", from: "S2", to: "S7", path: "forced", note: "total forced-path latency; equals M_L1 + M_L2" },
+  { id: "M_L4", from: "S1", to: "S8", path: "normal", note: "normal-path baseline" },
 ];
 
 function csvCell(value: unknown): string {
@@ -238,7 +255,8 @@ function buildRows(db: DatabaseHandle): {
       const a = stages.get(m.from);
       const b = stages.get(m.to);
       let d: Duration | null = null;
-      if (a && b && a.block_timestamp !== null && b.block_timestamp !== null) {
+      const appliesToPath = m.path === null || m.path === run.path;
+      if (appliesToPath && a && b && a.block_timestamp !== null && b.block_timestamp !== null) {
         d = clock.duration(
           { clockSource: a.clock_source, seconds: BigInt(a.block_timestamp) },
           { clockSource: b.clock_source, seconds: BigInt(b.block_timestamp) },
