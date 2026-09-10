@@ -90,7 +90,7 @@ database. Check before submitting, always.
 
 Distinguish **transport failures** (RPC timeout, connection reset → retry with backoff)
 from **protocol failures** (revert, out-of-gas, rejected → record as `outcome`, never
-retry). A reverting `forceInclude` is potentially the most interesting result in the entire
+retry). A reverting `forceInclusion` is potentially the most interesting result in the entire
 project. Never swallow it.
 
 ### I7 — No `any`, no non-null assertions on external data
@@ -133,7 +133,7 @@ src/
   core/retry.ts             # backoff + idempotency
   core/logger.ts            # pino setup
   protocols/adapter.ts      # ProtocolAdapter interface — THE extension point
-  protocols/arbitrum/       # delayed inbox + forceInclude
+  protocols/arbitrum/       # delayed inbox + forceInclusion
   protocols/opstack/        # portal deposits
   measurement/tracker.ts    # lifecycle event capture
   measurement/indexer.ts    # mainnet historical indexing
@@ -161,15 +161,39 @@ This asymmetry is the paper's central finding. Do not paper over it in the abstr
 
 | | Arbitrum Nitro | OP Stack |
 |---|---|---|
-| Forced path | `Inbox.sendL2Message` → wait delay → `SequencerInbox.forceInclude` | `OptimismPortal.depositTransaction` |
+| Forced path | `Inbox.sendL2Message` → wait delay → `SequencerInbox.forceInclusion` | `OptimismPortal.depositTransaction` |
 | User force call | **yes** | **no** — derivation includes it automatically |
 | L1 txs required | **2** | **1** |
 | Censorship precondition | yes, delay must elapse | none |
-| Worst case | 24h base; ~30 min floor under sustained censorship (BoLD buffer) | 12h sequencing window |
+| Worst case | 24h base; floor under *sustained* censorship = the buffer `threshold`, **in L1 blocks** (see below) | 12h sequencing window |
 
 `ProtocolAdapter.completeForced()` returns `null` for OP Stack. **This is not a stub.** It
 is the encoded form of the asymmetry and is directly the `M-U1` metric (number of
 user-initiated L1 transactions). Never "fix" it by inventing an OP Stack force call.
+
+### Two verified facts about the Arbitrum force path
+
+Both were wrong here until 2026-09-10, and both are latent — they only bite in E1.
+
+**1. `forceInclusion` gates on `delayBlocks`, not `delaySeconds`.** In nitro-contracts
+v3.1.0 the sole guard is
+`if (l1BlockAndTime[0] + delayBlocks_ >= block.number) revert ForceIncludeBlockTooSoon();`.
+`delaySeconds` is never read by the force path, and `ForceIncludeTimeTooSoon` does not exist
+in this version. To shorten the window, change **`delayBlocks`** via
+`SequencerInbox.setMaxTimeVariation`. On Arbitrum Sepolia the two agree (7200 blocks × 12s =
+86400s); on a devnet with ~1s blocks they differ by two orders of magnitude.
+
+**2. The "~30 minute floor" is a block count, and belongs to one specific deployment.** The
+effective gate is `min(bufferBlocks, delayBlocks)` and depletion saturates at the buffer's
+`threshold`, which is denominated in **L1 blocks**. Arbitrum One's documented threshold of
+150 blocks is ~30 min at 12s; the nitro-testnode devnet's measured threshold is 600 blocks,
+~10 min at its measured 1.003 s/block. Both are real. **Never state the floor as a duration
+without naming the configuration and the block time it assumes.**
+
+A corollary worth knowing before designing any E1 run: buffer depletion is **retroactive**.
+`DelayBuffer.update()` is called only from `delayProofImpl` and `forceInclusion`, so a
+censorship round depletes the buffer for the *next* round, never its own. BoLD cannot engage
+during a first incident. See BLUEPRINT §20.1.
 
 ---
 
@@ -203,14 +227,16 @@ npm run export -- --out data/export.csv
 
 - **Forced inclusion** — getting a transaction into the L2 via L1, bypassing the sequencer.
 - **Delayed inbox** (Arbitrum) — L1 queue the sequencer normally reads voluntarily.
-- **`forceInclude`** (Arbitrum) — the L1 call that forces delayed messages in after the
+- **`forceInclusion`** (Arbitrum) — the L1 call that forces delayed messages in after the
   delay elapses. Callable by anyone.
 - **Deposit transaction** (OP Stack) — an L1-originated transaction, type `0x7E`, that the
   derivation pipeline must include.
 - **Derivation** — how an OP Stack node computes L2 state from L1 data.
 - **Sequencing window** — 3600 L1 blocks (~12h); the OP Stack bound on forced inclusion.
 - **BoLD delay buffer** — Arbitrum mechanism that shortens the effective force window under
-  sustained censorship, toward a ~30 minute floor.
+  sustained censorship. Effective gate is `min(bufferBlocks, delayBlocks)`; the floor is the
+  buffer `threshold`, **in L1 blocks** (Arbitrum One 150 ≈ 30 min at 12s; devnet 600 ≈ 10
+  min at ~1s). Depletion is retroactive — see §5.
 - **E1 / E2 / E3** — local devnet / public testnet / mainnet. See §2 of the blueprint.
 - **Class A/B/C/D** — mainnet event classification. Only Class A supports strong claims.
 - **M-L1..M-L5, M-C1..M-C4, M-R1..M-R4, M-U1..M-U2** — the metric IDs from §9 of the
