@@ -29,7 +29,7 @@ from load import (
     companions,
     load_export,
 )
-from stats import binomial_ci, decompose_costs, mann_whitney, median_ci, median_wei
+from stats import MIN_BOOTSTRAP_N, binomial_ci, decompose_costs, mann_whitney, median_ci, median_wei, required_n
 
 WEI_PER_ETH = Decimal(10**18)
 RULE = "=" * 78
@@ -64,6 +64,69 @@ def report_coverage(df: pd.DataFrame) -> None:
             print(f"     {p}")
     else:
         print("  clock companions          : present for every latency metric")
+
+
+#: Which stages each latency metric needs. Used to explain a null.
+_METRIC_STAGES = {"M_L1": ("S2", "S3"), "M_L2": ("S3", "S7"), "M_L3": ("S2", "S7"), "M_L4": ("S1", "S8")}
+
+
+def report_null_durations(df: pd.DataFrame) -> None:
+    """Name every run with a null duration, and say which stage is missing.
+
+    The gap between n_total and n_used is otherwise unexplained, and an
+    unexplained gap invites the reader to assume it is noise. A stage that was
+    never recorded - because tracking was interrupted before it, say - makes its
+    metric genuinely uncomputable, and that is a fact about the run, not a
+    defect in the statistic.
+    """
+    section("NULL DURATIONS - which runs, and why")
+    df = df.copy()
+    df["cell"] = cell_key(df)
+    any_found = False
+    for metric, (a, b) in _METRIC_STAGES.items():
+        if metric not in df.columns:
+            continue
+        applicable = df[df["path"] == ("normal" if metric == "M_L4" else "forced")]
+        nulls = applicable[applicable[metric].isna()]
+        if nulls.empty:
+            continue
+        any_found = True
+        print(f"  {metric} (needs {a} and {b}) - {len(nulls)}/{len(applicable)} applicable runs have no value:")
+        for _, r in nulls.iterrows():
+            missing = [
+                st for st in (a, b)
+                if f"{st}_block_timestamp" not in r.index or pd.isna(r[f"{st}_block_timestamp"])
+            ]
+            reason = f"{' and '.join(missing)} never recorded" if missing else "stage timestamps present but metric null - INVESTIGATE"
+            print(f"    {str(r['run_id'])[:8]}  {r['cell']:<24} outcome={r['outcome']:<8} {reason}")
+    if not any_found:
+        print("  none - every applicable run has every metric its path defines.")
+        print("  n_used equals n_total in every cell below.")
+
+
+def report_sample_size(df: pd.DataFrame) -> None:
+    """What final n each cell needs, from the pilot (BLUEPRINT section 10)."""
+    section("SAMPLE SIZE - final n for a 95% CI half-width within +/-10% of the median")
+    print("  Computed by resampling the pilot at increasing n, not from a formula:")
+    print("  latency has no assumed distribution to plug into one.")
+    print("  Inherits the pilot's shape - if the pilot missed a rare slow case,")
+    print("  this understates the n needed.")
+    print()
+    df = df.copy()
+    df["cell"] = cell_key(df)
+    forced = df[df["path"] == "forced"]
+    if forced.empty:
+        print("  no forced runs")
+        return
+    for cell, grp in forced.groupby("cell"):
+        r = required_n(grp["M_L2"], target=0.10)
+        if r.achieved is None:
+            print(f"  {cell:<28} NOT REACHED within n<={r.searched_to}  ({r.note})")
+            continue
+        pilot = "n/a" if r.pilot_half_width_frac is None else f"{r.pilot_half_width_frac:.1%}"
+        already = " - ALREADY MET by the pilot" if r.achieved <= r.pilot_n else ""
+        print(f"  {cell:<28} required n = {r.achieved:<4} (half-width {r.half_width_frac:.1%})")
+        print(f"  {'':<28} pilot n = {r.pilot_n}, pilot half-width {pilot}{already}")
 
 
 def report_latencies(df: pd.DataFrame) -> None:
@@ -196,12 +259,14 @@ def main() -> None:
 
     print(f"\nEscape-hatch dataset analysis - {args.csv}")
     report_coverage(df)
+    report_null_durations(df)
     report_latencies(df)
     report_costs(df)
     report_decomposition(df)
     report_reliability(df)
     report_tests(df)
     report_usability(df)
+    report_sample_size(df)
     print()
 
 
