@@ -24,6 +24,7 @@ Neither implementation is novel:
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass
 
 
@@ -159,6 +160,137 @@ def clopper_pearson(k: int, n: int, confidence: float = 0.95) -> tuple[float, fl
 # ---------------------------------------------------------------------------
 # Self-test. Run: python analysis/nonparametric.py
 # ---------------------------------------------------------------------------
+
+
+
+# ---------------------------------------------------------------------------
+# Order-dependence tests (exchangeability)
+# ---------------------------------------------------------------------------
+
+#: Fixed so a rerun reproduces the same permutation p-values. A p-value that
+#: moves between runs cannot be checked by a reviewer.
+PERMUTATION_SEED = 20260911
+PERMUTATIONS = 10_000
+
+
+@dataclass(frozen=True)
+class SpearmanResult:
+    rho: float
+    p: float
+    n: int
+    permutations: int
+
+
+def spearman_rho(values: list[float]) -> SpearmanResult:
+    """Rank correlation of a series against its own collection index.
+
+    Tests for DRIFT: if later observations are systematically larger or smaller
+    than earlier ones, the sample is ordered rather than exchangeable, and a
+    bootstrap CI - which resamples as though order carried no information -
+    is estimating the wrong thing.
+
+    The p-value is a two-sided MONTE CARLO PERMUTATION test rather than the
+    usual t-approximation. With n=25 the approximation is adequate but not
+    exact, and permuting is assumption-free, needs no incomplete-beta routine,
+    and is reproducible from a fixed seed. Ties get average ranks.
+    """
+    n = len(values)
+    if n < 3:
+        return SpearmanResult(float("nan"), float("nan"), n, 0)
+
+    idx = [float(i) for i in range(n)]
+
+    def rho_of(v: list[float]) -> float:
+        rx, ry = _average_ranks(idx), _average_ranks(v)
+        mx, my = sum(rx) / n, sum(ry) / n
+        num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+        dx = math.sqrt(sum((a - mx) ** 2 for a in rx))
+        dy = math.sqrt(sum((b - my) ** 2 for b in ry))
+        return 0.0 if dx == 0 or dy == 0 else num / (dx * dy)
+
+    observed = rho_of(values)
+    if observed != observed:  # NaN guard
+        return SpearmanResult(observed, float("nan"), n, 0)
+
+    rng = random.Random(PERMUTATION_SEED)
+    shuffled = list(values)
+    at_least = 0
+    for _ in range(PERMUTATIONS):
+        rng.shuffle(shuffled)
+        if abs(rho_of(shuffled)) >= abs(observed) - 1e-12:
+            at_least += 1
+    # +1/+1 so p is never exactly zero: 10,000 permutations cannot demonstrate
+    # a p below 1/10,001.
+    p = (at_least + 1) / (PERMUTATIONS + 1)
+    return SpearmanResult(observed, p, n, PERMUTATIONS)
+
+
+@dataclass(frozen=True)
+class RunsResult:
+    runs: int | None
+    n_above: int
+    n_below: int
+    n_tied: int
+    expected: float | None
+    p: float | None
+    note: str
+
+
+def runs_test(values: list[float]) -> RunsResult:
+    """Wald-Wolfowitz runs test against the median, EXACT.
+
+    Complements Spearman: a monotone drift shows up in rho, but a sample split
+    into a fast early phase and a slow later one - two regimes rather than a
+    trend - shows up as too FEW runs while rho may stay small.
+
+    Values exactly equal to the median are dropped, which is the standard
+    treatment and is reported in `n_tied` because it is not free: these
+    latencies are integer-valued and heavily tied, so dropping can leave too
+    little to test. When it does, the result says so rather than returning a
+    number.
+
+    The null distribution is enumerated exactly with math.comb rather than
+    normal-approximated, because after dropping ties the group sizes here are
+    around ten and the approximation is poor at that size.
+    """
+    n = len(values)
+    if n < 4:
+        return RunsResult(None, 0, 0, 0, None, None, "fewer than 4 observations")
+
+    srt = sorted(values)
+    median = srt[n // 2] if n % 2 else (srt[n // 2 - 1] + srt[n // 2]) / 2
+
+    seq = [1 if v > median else (0 if v < median else None) for v in values]
+    kept = [x for x in seq if x is not None]
+    n_tied = n - len(kept)
+    n1 = sum(kept)
+    n2 = len(kept) - n1
+    if n1 < 2 or n2 < 2:
+        return RunsResult(
+            None, n1, n2, n_tied, None, None,
+            f"not computable: {n_tied} of {n} values sit exactly on the median, leaving {n1} above / {n2} below",
+        )
+
+    runs = 1 + sum(1 for a, b in zip(kept, kept[1:]) if a != b)
+    total = math.comb(n1 + n2, n1)
+
+    def prob(r: int) -> float:
+        if r < 2:
+            return 0.0
+        if r % 2 == 0:
+            s = r // 2
+            return 2 * math.comb(n1 - 1, s - 1) * math.comb(n2 - 1, s - 1) / total
+        s = (r - 1) // 2
+        return (math.comb(n1 - 1, s) * math.comb(n2 - 1, s - 1)
+                + math.comb(n1 - 1, s - 1) * math.comb(n2 - 1, s)) / total
+
+    dist = {r: prob(r) for r in range(2, n1 + n2 + 1)}
+    observed_p = dist.get(runs, 0.0)
+    # Two-sided exact p: total probability of outcomes no more likely than the
+    # one observed. Standard for a discrete asymmetric null.
+    p = sum(v for v in dist.values() if v <= observed_p + 1e-15)
+    expected = 2 * n1 * n2 / (n1 + n2) + 1
+    return RunsResult(runs, n1, n2, n_tied, expected, min(1.0, p), "exact")
 
 
 def _selftest() -> int:
