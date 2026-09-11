@@ -1,6 +1,6 @@
 # Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups
 
-**Draft — sections 1-6 and 9-10.** Discussion and Related Work are not drafted yet (pending verified citations).
+**Draft — sections 1-6 and 9-10.** Discussion and Related Work are not drafted yet (citations pending verification).
 
 > **Provenance rule for this document.** Every quantitative claim carries a bracketed source:
 > `[E2]` the 100-run public-testnet dataset (`data/export.csv`); `[E1]` the controlled devnet
@@ -38,8 +38,8 @@ hatch is structurally unreachable.** `forceInclusion` acts only on delayed messa
 sequencer has not yet read, and a healthy sequencer reads them within minutes, hours before
 the 24-hour window opens [P, E2]. The mechanism cannot be rehearsed: a user's first invocation
 is necessarily under adversarial conditions. **(iii) It has never been invoked.** Across the *complete* history of the mechanism —
-1,332,631 batches over a contiguous 10,537,989 L1 blocks, from the SequencerInbox's deployment
-to block 25,949,044 — there is **not one successful `forceInclusion` call**, an exact binomial
+1,332,810 batches over a contiguous 10,540,270 L1 blocks, from the SequencerInbox's deployment
+to chain head at block 25,951,325 — there is **not one successful `forceInclusion` call**, an exact binomial
 95% CI on the rate of [0, 2.77 × 10⁻⁶]; nor one user-submitted escape-hatch message among the
 delayed-inbox messages we sampled [M]. **(iv) Two structural properties of Arbitrum's
 delay buffer, established from the deployed source and confirmed on our devnet:** buffer
@@ -635,53 +635,81 @@ sharing one timestamp — is absent.
 Read-only classification of mainnet history per §4.5. Every range is recorded with its scan,
 every row carries its evidence string, and no class is ever upgraded to improve a count.
 
-### 10.1 What was examined
+### 10.1 The candidate set was empty before any condition was applied
+
+A null result produced by a four-condition classifier invites one obvious objection: *the
+filter was too strict*. We answer it by reporting the stage before the filter.
+
+`forceInclusion` is the only operation that produces a batch with
+`dataLocation = NoData` — the classifier's first condition, and the one that selects the
+candidate set the other three conditions then test. Across the **1,231,699** batches
+enumerated by the log census, the complete `dataLocation` population is [M]:
+
+| `dataLocation` | meaning | count |
+|---|---|---|
+| 0 | `TxInput` — batch data in calldata | 592,318 |
+| 3 | `Blob` — batch data in 4844 blobs | 639,380 |
+| 1 | `SeparateBatchEvent` | 1 |
+| **2** | **`NoData` — what `forceInclusion` emits** | **0** |
+
+Every batch is accounted for; the counts sum to the total. **The Class A candidate set was
+empty**, so the remaining three conditions — selector, receipt status, direct call — were never
+reached and could not have excluded anything. The zero is a property of the chain, not of our
+classifier's strictness.
+
+Three things together make it defensible rather than merely reported.
+
+**Coverage is contiguous, not sampled.** The census spans blocks 15,411,056 to 25,951,325 —
+from the SequencerInbox proxy's first block with code through to the chain head at census time
+— with **no unexamined gaps**. This is stronger than disjointness, which a set of ranges can
+satisfy while still leaving blocks between them for an event to hide in, and
+`analysis/mainnet.py` prints the contiguity check explicitly rather than leaving it implied.
+
+**Two independent data sources agree.** 1,231,699 batches come from an explorer's indexed log
+API and 101,111 from direct RPC `eth_getLogs` against an archive node, over different block
+ranges and through entirely different infrastructure. Both report zero NoData. A silent
+failure in one would have to be matched by a silent failure in the other to produce this.
+
+**The target and the selector were verified across every version, not assumed.** The proxy
+address is stable across all of Nitro history — `bridge.sequencerInbox()` returns
+`0x1c4796…82B6` at all ten blocks sampled from 15,411,100 to 25,949,044 — whereas the *Rollup*
+address is **not**, `0x4DCeB4…Cfc0` having code only from block 21,830,860, so resolving the
+inbox through `rollup()` would have silently missed everything before the BoLD upgrade. Five
+distinct implementations have sat behind the proxy, and **all five** contain `0xf1981578`;
+none contains any alternative spelling [S]. A census pointed at the wrong address, or matching
+a selector that only the current implementation uses, would return zero for reasons that have
+nothing to do with user behaviour.
+
+### 10.2 Class A: zero, and the bound it supports
+
+**`forceInclusion` has never been successfully called on Arbitrum One.** Zero confirmed forced
+inclusions in **1,332,810 batches** across the contiguous span above. Exact Clopper–Pearson
+95% CI on the rate: **[0, 2.77 × 10⁻⁶]** [M].
+
+The denominator is batches rather than blocks or elapsed time, because every
+`SequencerBatchDelivered` either was a forced inclusion or was not — which is what makes the
+interval binomial. Stated as a reader should quote it: *in the entire operational lifetime of
+Arbitrum One's escape hatch, no user has ever successfully invoked it, and the data bounds the
+rate at no more than about one per 361,300 batches.*
+
+Zero observed is still not zero possible — a first use tomorrow would not contradict this —
+but the observation window is no longer the limitation, and the bound is now a statement about
+the mechanism rather than about our sampling.
+
+### 10.3 What was examined
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
-| Arbitrum One | SequencerInbox | **15,411,056-25,949,044 (10,537,989, contiguous)** | **1,332,631 batches** | **0** | — | — | — |
-| Arbitrum One | Bridge | 25,929,045-25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
-| OP Mainnet | OptimismPortal | 25,939,045-25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
-| Base | OptimismPortal | 25,939,045-25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
+| Arbitrum One | SequencerInbox | **15,411,056–25,951,325 (10,540,270, contiguous)** | **1,332,810 batches** | **0** | — | — | — |
+| Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
+| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
+| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
-Ranges are disjoint per target, so the counts sum to a valid denominator [M].
+Only the Arbitrum One SequencerInbox scan is full-history; the other three are bounded windows
+and are reported as such. Ranges are disjoint per target, so the counts sum to valid
+denominators [M].
 
-### 10.2 Class A: zero, and the bound that supports
-
-**`forceInclusion` has never been successfully called on Arbitrum One.** Zero confirmed forced
-inclusions in **1,332,631 batches** over a **contiguous 10,537,989 L1 blocks** — from block
-15,411,056, where the SequencerInbox proxy first has code, to block 25,949,044, with no
-unexamined gaps. Exact Clopper-Pearson 95% CI on the rate: **[0, 2.77 x 10^-6]** [M].
-
-The denominator is batches rather than blocks or time, because every `SequencerBatchDelivered`
-either was a forced inclusion or was not — which is what makes the interval binomial. Stated as
-a reader should quote it: *in the entire operational lifetime of Arbitrum One's escape hatch,
-no user has ever successfully invoked it, and the data bounds the rate at no more than about
-one per 361,000 batches.* Zero observed is still not zero possible — a first use tomorrow
-would not contradict this — but the observation window is no longer the limitation.
-
-**Coverage is complete rather than sampled**, which matters for a null result: a partial
-census leaves a reader wondering whether the events are simply elsewhere. `analysis/mainnet.py`
-prints an explicit contiguity check, because disjointness alone would still permit an
-unexamined gap for an event to hide in.
-
-The entire batch population is accounted for, which is stronger than a filtered count. Across
-the 1,231,520 batches enumerated by the log census, `dataLocation` was TxInput 592,318, Blob
-639,201, SeparateBatchEvent 1, and **NoData 0** — and NoData is what `forceInclusion`
-produces. The Class A candidate set was empty *before* any of the four confirmation conditions
-were applied, so the zero is not an artifact of a strict classifier. The remaining 101,111
-batches come from independent RPC scans, which likewise found no NoData: two different data
-sources over different ranges, agreeing.
-
-Two facts make the census correct, and both were verified rather than assumed. The proxy
-address is **stable across all of Nitro history** — `bridge.sequencerInbox()` returns
-`0x1c4796...82B6` at all ten blocks sampled from 15,411,100 to 25,949,044 — whereas the
-*Rollup* address is not, `0x4DCeB4...Cfc0` having code only from block 21,830,860, so resolving
-the inbox via `rollup()` would have silently missed everything before the BoLD upgrade. And the
-selector is stable: **all five** implementations that have sat behind the proxy contain
-`0xf1981578`, and none contains any alternative spelling [S].
-
-### 10.3 Class B: zero, and the delay data says why
+### 10.4 Class B: zero, and the delay data says why
 
 No message exceeded the window the protocol itself calls expected. Observed read delays were
 **min 34, median 56, max 94 L1 blocks** against the inbox's own on-chain `buffer().threshold`
@@ -692,7 +720,7 @@ lagging and nothing qualifies. The boundary is read from chain, never chosen.
 batch lies past `toBlock`. They are held at D rather than assumed ordinary, which is what the
 class is for.
 
-### 10.4 The sharpest form of the result: zero escape-hatch messages
+### 10.5 The sharpest form of the result: zero escape-hatch messages
 
 Of 2,646 `MessageDelivered` events on Arbitrum One, **not one was kind 3 (`L2_MSG`)** — the
 delayed-inbox path a user takes to submit a signed transaction bypassing the sequencer [M]:
@@ -714,7 +742,7 @@ messages carry a leading `L2MessageType` byte; retryables and deposits begin wit
 of a packed `uint256`, usually `0x00`. A byte-prefix classifier cannot distinguish "no
 escape-hatch messages" from "these are not escape-hatch messages at all".
 
-### 10.5 OP Stack deposits: 1,457 events, all Class C by construction
+### 10.6 OP Stack deposits: 1,457 events, all Class C by construction
 
 362 deposits on OP Mainnet and 1,095 on Base, every one Class C [M]. This is a statement about
 what the data can support, not a finding about usage: `TransactionDeposited` is emitted
@@ -723,7 +751,7 @@ and no field distinguishes them. We therefore report OP deposits as **mechanism 
 never as evidence of censorship. Counting deposit volume as escape-hatch usage would produce a
 large number that means nothing — the confound this classification exists to prevent.
 
-### 10.6 What the mainnet data cannot settle
+### 10.7 What the mainnet data cannot settle
 
 **The batch-size distribution.** With zero Class A events there is no mainnet distribution, so
 the griefing-versus-public-good reading of batch-priced forcing (§9.6) is **not decided**. E1's
@@ -736,3 +764,60 @@ only matters in unquiet ones.
 **Whether the hatch was ever *needed*.** Class A records that the mechanism was *used*. Our
 classification has no category that would license the inference that it was necessary, and we
 do not draw it.
+
+### 10.8 Verifying the instrument, and why these checks exist
+
+A null result is unfalsifiable by construction unless the instrument's failure modes are
+enumerated in advance. "We looked and found nothing" and "our tooling silently returned
+nothing" produce identical output, and no amount of inspecting the *result* distinguishes
+them — a broken census and a true zero look the same. The checks below were therefore built as
+positive controls and reconciliations, not as sanity-checks on an answer that looked wrong.
+
+That is not a hypothetical concern. **Three separate errors arose in this project, and each
+would have produced a plausible result biased toward this paper's conclusion.** None was
+caught by the output looking suspicious; each was caught by a check that existed to catch it.
+
+**1. A provider-side filter that returned zero for a selector known to be present.**
+Blockscout's `method=` parameter returns zero items for `0x3e5aa082` — a selector we had
+observed on that exact address moments earlier — and zero for the method *name* as well. It
+fails silently rather than erroring. Used naively it would have reported "zero forced
+inclusions across all history" in one request, with no symptom of malfunction.
+*Check:* a **positive control** runs before every census and tests the source against
+independently confirmed facts — that logs come back at all, and that every one decodes to the
+expected seven-word shape. The census refuses to run if the control fails, and the control's
+result is printed with the census output rather than assumed. Consequently no provider-side
+method filter is used anywhere in this work: `dataLocation` is decoded locally from each log's
+own data word.
+
+**2. An analysis that silently dropped every census row from the binomial denominator.**
+`analysis/mainnet.py` selected scans with `target_label == "SequencerInbox"`, while the census
+writes `SequencerInbox:logcensus`. The Class A numerator was unaffected — it was zero either
+way — so the reported interval was computed over only the RPC-scanned batches. The error was
+invisible in the output: a valid-looking CI over a smaller *n*, biasing toward a *wider*
+interval here, but the same class of error over a larger *n* would have narrowed it.
+*Check:* a **denominator reconciliation** — the coverage table prints `logs_seen` per scan and
+the rate is computed from their sum, so numerator and denominator are visible together and can
+be added up by hand. Both scan routes now contribute to the same population.
+
+**3. Overlapping scan ranges double-counting the denominator.** Two census windows overlapped
+(one was fully contained in the other), and a third overlapped an earlier RPC scan. Summing
+their `logs_seen` would have inflated *n* and **narrowed the confidence interval** — failing in
+precisely the direction that flatters a "never used" conclusion, and producing a more
+impressive-looking bound from less evidence.
+*Check:* **overlap detection plus a contiguity check**. Overlaps are reported before any rate
+is quoted; contiguity is reported separately, because disjointness alone still permits
+unexamined blocks *between* ranges where an event could sit. The phrase "across all of
+Nitro-era history" is licensed by the printed contiguity line, not by the author's arithmetic.
+
+Two further checks belong to the same family and are reported with the results they guard.
+The **clock-ordering check** (§9.7) tests the whole E2 dataset against a relation that admits
+no argument — a transaction cannot appear on L2 before the L1 block that carried it — after
+the E1 run produced exactly that impossibility. And the census records **which source produced
+each range**, so the agreement between two independent infrastructures (§10.1) is a property
+of the data rather than a claim about it.
+
+The common shape is worth stating for anyone reproducing this. Every one of these failures is
+*silent*, *plausible*, and *directionally favourable* to the hypothesis. Measurement code for
+a rare-event study should therefore be instrumented to fail loudly on a known positive, rather
+than trusted to fail visibly on a true negative — because on a true negative there is nothing
+to see.

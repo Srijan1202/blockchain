@@ -436,29 +436,29 @@ archive depth or a usable `getLogs` span, rarely both).
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
-| Arbitrum One | SequencerInbox | **15,411,056–25,949,044 (10,537,989 — all of Nitro)** | **1,332,631 batches** | **0** | – | – | – |
+| Arbitrum One | SequencerInbox | **15,411,056–25,949,044 (10,540,270 — all of Nitro, to chain head)** | **1,332,810 batches** | **0** | – | – | – |
 | Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
 | OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
 | Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
-**Class A = 0 across ALL of Nitro-era history.** 1,332,631 `SequencerBatchDelivered` events
-over a **contiguous** 10,537,989 L1 blocks — from 15,411,056, where the SequencerInbox proxy
-first has code, to 25,949,044 — with **no unexamined gaps**. Exact binomial (Clopper–Pearson)
-95% CI on the rate: **[0, 2.77 × 10⁻⁶]**, i.e. at most about one per 361,000 batches.
+**Class A = 0 across ALL of Nitro-era history.** 1,332,810 `SequencerBatchDelivered` events
+over a **contiguous** 10,540,270 L1 blocks — from 15,411,056, where the SequencerInbox proxy
+first has code, to 25,951,325, the chain head at census time — with **no unexamined gaps**. Exact binomial (Clopper–Pearson)
+95% CI on the rate: **[0, 2.77 × 10⁻⁶]**, i.e. at most about one per 361,300 batches.
 
 **`forceInclusion` has never been called successfully on Arbitrum One.** Not "rarely"; the
-count is zero over the mechanism's entire lifetime to block 25,949,044.
+count is zero over the mechanism's entire lifetime to block 25,951,325.
 
 The whole batch population is accounted for, which is stronger than a filtered count: across
-the 1,231,520 batches enumerated by the log census, `dataLocation` was TxInput 592,318,
-Blob 639,201, SeparateBatchEvent 1, and **NoData 0**. NoData is what `forceInclusion`
+the 1,231,699 batches enumerated by the log census, `dataLocation` was TxInput 592,318,
+Blob 639,380, SeparateBatchEvent 1, and **NoData 0**. NoData is what `forceInclusion`
 produces, so the candidate set was empty before any of the four Class A conditions were even
 applied. (The remaining 101,111 batches come from the earlier RPC scans, which reported 0
 NoData over their range.)
 
 ### 12.2 Attempt to extend to full Nitro-era history (2026-09-11)
 
-§12.1 originally covered 1,000,000 of 10,537,989 Nitro-era blocks. Closing the remaining 90%
+§12.1 originally covered 1,000,000 of the era's 10,540,270 blocks. Closing the remaining 90%
 established two things worth keeping, and took two attempts because the obvious route is the
 wrong one.
 
@@ -508,8 +508,8 @@ log-based rather than transaction-based.
 | Blockscout v2 `method=` filter | **silently broken — do not use.** Returns 0 items for `0x3e5aa082`, a selector directly observed on this address moments earlier, and 0 for the method *name* too. A naive use would have produced a confident, entirely fake "zero Class A". |
 | drpc archive `getLogs` | works, and produced §12.1, but throughput collapses under sustained use; a 700,000-block range ran >30 min without completing |
 
-**The Class A denominator is now 1,332,631 batches over a contiguous 10,537,989 blocks — the
-complete Nitro era.** `npm run census -- --api etherscan` reproduces it; `analysis/mainnet.py`
+**The Class A denominator is now 1,332,810 batches over a contiguous 10,540,270 blocks — the
+complete Nitro era, through to chain head.** `npm run census -- --api etherscan` reproduces it; `analysis/mainnet.py`
 prints the contiguity check that licenses the phrase "across all of Nitro-era history", since
 disjointness alone would still permit an unexamined gap for an event to hide in.
 
