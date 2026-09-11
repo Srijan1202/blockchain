@@ -15,7 +15,8 @@
     "run": "tsx src/cli/run.ts",
     "export": "tsx src/cli/export.ts",
     "resume": "tsx src/cli/resume.ts",
-    "index-mainnet": "tsx src/cli/index-mainnet.ts"
+    "index-mainnet": "tsx src/cli/index-mainnet.ts",
+    "census": "tsx src/cli/census-forced.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

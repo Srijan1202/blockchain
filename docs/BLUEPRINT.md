@@ -436,15 +436,17 @@ archive depth or a usable `getLogs` span, rarely both).
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
-| Arbitrum One | SequencerInbox | 24,949,045–25,949,044 (1,000,000) | 101,111 batches | **0** | – | – | – |
+| Arbitrum One | SequencerInbox (RPC getLogs) | 24,949,045–25,949,044 (1,000,000) | 101,111 batches | **0** | – | – | – |
+| Arbitrum One | SequencerInbox (explorer census) | 15,411,056–15,674,870 (263,815) | 8,992 batches | **0** | – | – | – |
 | Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
 | OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
 | Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
-**Class A = 0 in 101,111 consecutive batches.** Exact binomial (Clopper–Pearson) 95% CI on
-the rate: **[0, 3.65 × 10⁻⁵]**. Stated the way it should be quoted: *no forced inclusion
-occurred in one million L1 blocks (~139 days), and the data is consistent with a true rate
-as high as roughly one per 27,000 batches.* Zero observed is not zero possible.
+**Class A = 0 in 110,103 batches across two disjoint windows.** Exact binomial
+(Clopper–Pearson) 95% CI on the rate: **[0, 3.35 × 10⁻⁵]**. Stated the way it should be
+quoted: *no forced inclusion occurred in 1,263,815 L1 blocks, and the data is consistent with
+a true rate as high as roughly one per 29,800 batches.* Zero observed is not zero possible.
+Coverage is **12.0% of Nitro-era history** (1,263,815 of 10,537,989 blocks).
 
 ### 12.2 Attempt to extend to full Nitro-era history (2026-09-11)
 
@@ -467,19 +469,36 @@ checked, because the surrounding contracts did change.
   `0xd8774d5a` or the other plausible spellings. The v3.1.0 verification generalises
   backwards, as a checked fact rather than an assumption.
 
-**Not achieved: full coverage.** Both enumeration routes are blocked on free infrastructure.
+**Decisive: a transaction list cannot do this job, whatever the API key.** The obvious tool for
+"a transaction to a known address with a known selector" is a txlist, and it is the wrong tool
+*for this address*. An Arbitrum batch-posting transaction's calldata IS the batch: measured
+2026-09-11, 50 rows = 9.96 MB and 200 rows = 39.8 MB, i.e. **~199 KB per transaction**.
+Enumerating the SequencerInbox's 1,333,720 transactions would move roughly **266 GB**, and a
+10,000-row page times out the provider gateway (HTTP 524). The request count is small; the
+bytes are not. An Etherscan key does not change this.
+
+**What does work: enumerate LOGS, not transactions.** A `SequencerBatchDelivered` log is ~450
+bytes rather than ~199 KB, every `forceInclusion` emits one with `dataLocation = NoData`, and
+the same Etherscan-format API exposes `module=logs`. `npm run census` implements this, filters
+`dataLocation` locally, and runs a positive control before trusting any result. It added the
+15,411,056–15,674,870 window (8,992 batches, 0 Class A) before the free endpoint's quota
+stopped it, lifting coverage from 9.5% to 12.0%.
+
+**Still not achieved: full coverage.** The remaining routes are blocked on free infrastructure.
 
 | Route | Outcome |
 |---|---|
 | Etherscan v2 `txlist` | requires an API key; none available |
-| Blockscout `txlist` | works, but the public instance returns HTTP 429 under sustained use (persisted across 45 s backoffs); one page is ~20 MB, and ~133 pages would be needed for 1,333,720 transactions |
+| Blockscout `txlist` | infeasible by payload: ~199 KB per transaction, ~266 GB total; 10,000-row pages return HTTP 524 |
+| Blockscout `logs` | the right shape (~1 MB per 1,000-event page) and it works, but the public instance returns HTTP 429 under sustained use even with escalating backoff |
 | Blockscout v2 `method=` filter | **silently broken — do not use.** Returns 0 items for `0x3e5aa082`, a selector directly observed on this address moments earlier, and 0 for the method *name* too. A naive use would have produced a confident, entirely fake "zero Class A". |
 | drpc archive `getLogs` | works, and produced §12.1, but throughput collapses under sustained use; a 700,000-block range ran >30 min without completing |
 
-**So the Class A denominator remains 101,111 batches over 1,000,000 blocks.** Extending it
-needs a paid archive endpoint or an Etherscan key; the indexer already accepts any range, so
-this is an infrastructure cost, not further engineering. The claim in §12.1 must not be
-restated as "across all history" until that is done.
+**So the Class A denominator stands at 110,103 batches over 1,263,815 blocks — 12.0% of
+Nitro-era history.** Completing it needs an Etherscan API key (free tier: 5 calls/sec, 100k
+calls/day; the log census needs roughly 1,000 calls) or any endpoint that will serve sustained
+`module=logs` requests. `npm run census --api etherscan` is implemented and waiting on the key.
+The claim in §12.1 must not be restated as "across all history" until that is done.
 
 **Sharper still: zero kind-3 messages.** Of 2,646 `MessageDelivered` events, **not one was
 `L2_MSG` (kind 3)** — the delayed-inbox path a user takes to bypass the sequencer. The
