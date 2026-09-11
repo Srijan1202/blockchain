@@ -206,23 +206,45 @@ async function blockTimestamps(
   blockNumbers: Iterable<bigint>,
   concurrency: number,
   logger: Logger,
+  retries = 4,
 ): Promise<Map<string, bigint>> {
   const distinct = [...new Set([...blockNumbers].map((b) => b.toString()))];
   const out = new Map<string, bigint>();
-  for (let i = 0; i < distinct.length; i += concurrency) {
-    const slice = distinct.slice(i, i + concurrency);
-    const blocks = await Promise.all(
-      slice.map((n) =>
-        client.getBlock({ blockNumber: BigInt(n) }).then(
-          (b) => ({ n, ts: b.timestamp }),
-          () => ({ n, ts: null }),
+
+  let pending = distinct;
+  for (let attempt = 0; attempt <= retries && pending.length > 0; attempt++) {
+    if (attempt > 0) {
+      logger.warn({ remaining: pending.length, attempt }, "retrying block timestamps");
+      await sleep(500 * 2 ** attempt);
+    }
+    const failed: string[] = [];
+    for (let i = 0; i < pending.length; i += concurrency) {
+      const slice = pending.slice(i, i + concurrency);
+      const blocks = await Promise.all(
+        slice.map((n) =>
+          client.getBlock({ blockNumber: BigInt(n) }).then(
+            (b) => ({ n, ts: b.timestamp }),
+            () => ({ n, ts: null }),
+          ),
         ),
-      ),
-    );
-    for (const b of blocks) if (b.ts !== null) out.set(b.n, b.ts);
+      );
+      for (const b of blocks) {
+        if (b.ts !== null) out.set(b.n, b.ts);
+        else failed.push(b.n);
+      }
+    }
+    pending = failed;
   }
-  if (out.size !== distinct.length) {
-    logger.warn({ wanted: distinct.length, got: out.size }, "some block timestamps could not be fetched");
+
+  // A block whose timestamp never resolves costs us the EVENTS in it, and a
+  // silently smaller row count is exactly the failure mode section 10.8 is
+  // about: it looks like data rather than like an error. So this is an error,
+  // not a warning, and the caller propagates the count into the scan record.
+  if (pending.length > 0) {
+    logger.error(
+      { wanted: distinct.length, got: out.size, unresolved: pending.length, sample: pending.slice(0, 5) },
+      "block timestamps UNRESOLVED after retries - events in these blocks cannot be stored and are counted as dropped",
+    );
   }
   return out;
 }
@@ -234,6 +256,7 @@ async function blockTimestamps(
 export interface ForceInclusionRecord {
   classified: Classified;
   txHash: Hex;
+  logIndex: number;
   blockNumber: bigint;
   blockTimestamp: bigint;
   actor: Address | null;
@@ -403,6 +426,7 @@ export async function scanArbitrumBatches(opts: ArbitrumScanOptions): Promise<Ar
 
   const decoded = logs as Array<{
     transactionHash: Hex;
+    logIndex: number;
     blockNumber: bigint;
     args: { afterDelayedMessagesRead?: bigint; dataLocation?: number };
   }>;
@@ -487,6 +511,7 @@ export async function scanArbitrumBatches(opts: ArbitrumScanOptions): Promise<Ar
     forceRecords.push({
       classified,
       txHash: c.transactionHash,
+      logIndex: c.logIndex,
       blockNumber: c.blockNumber,
       blockTimestamp: block.timestamp,
       actor,
@@ -509,6 +534,8 @@ export async function scanArbitrumBatches(opts: ArbitrumScanOptions): Promise<Ar
 export interface DelayedMessageRecord {
   classified: Classified;
   txHash: Hex;
+  /** Log position in its block; part of the event's identity. See migration 005. */
+  logIndex: number;
   blockNumber: bigint;
   blockTimestamp: bigint;
   messageIndex: bigint;
@@ -528,7 +555,7 @@ export async function scanDelayedMessages(opts: {
   /** Restrict to escape-hatch messages. Everything else is sequencer bookkeeping. */
   onlyL2Msg: boolean;
   logger: Logger;
-}): Promise<{ logsSeen: number; gaps: Array<{ from: bigint; to: bigint; reason: string }>; records: DelayedMessageRecord[] }> {
+}): Promise<{ logsSeen: number; gaps: Array<{ from: bigint; to: bigint; reason: string }>; records: DelayedMessageRecord[]; dropped: number }> {
   const { logs, gaps } = await getLogsChunked(
     opts.client,
     { address: opts.bridge, event: MESSAGE_DELIVERED_EVENT, range: opts.range, chunk: opts.chunk, throttleMs: opts.throttleMs, retries: 3 },
@@ -537,6 +564,7 @@ export async function scanDelayedMessages(opts: {
 
   const decoded = logs as Array<{
     transactionHash: Hex;
+    logIndex: number;
     blockNumber: bigint;
     args: { messageIndex?: bigint; kind?: number };
   }>;
@@ -549,10 +577,14 @@ export async function scanDelayedMessages(opts: {
 
   const records: DelayedMessageRecord[] = [];
   const blockCache = await blockTimestamps(opts.client, relevant.map((m) => m.blockNumber), 8, opts.logger);
+  let dropped = 0;
 
   for (const m of relevant) {
     const index = m.args.messageIndex;
-    if (index === undefined) continue;
+    if (index === undefined) {
+      dropped += 1;
+      continue;
+    }
 
     // First batch whose read count passed this index.
     const read = opts.reads.find((r) => r.afterDelayedMessagesRead > index);
@@ -567,11 +599,15 @@ export async function scanDelayedMessages(opts: {
     });
 
     const ts = blockCache.get(m.blockNumber.toString());
-    if (ts === undefined) continue;
+    if (ts === undefined) {
+      dropped += 1;
+      continue;
+    }
 
     records.push({
       classified,
       txHash: m.transactionHash,
+      logIndex: m.logIndex,
       blockNumber: m.blockNumber,
       blockTimestamp: ts,
       messageIndex: index,
@@ -580,7 +616,10 @@ export async function scanDelayedMessages(opts: {
     });
   }
 
-  return { logsSeen: decoded.length, gaps, records };
+  if (dropped > 0) {
+    opts.logger.error({ dropped, kept: records.length, examined: relevant.length }, "events examined but NOT stored");
+  }
+  return { logsSeen: decoded.length, gaps, records, dropped };
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +629,8 @@ export async function scanDelayedMessages(opts: {
 export interface DepositRecord {
   classified: Classified;
   txHash: Hex;
+  /** Log position in its block; part of the event's identity. See migration 005. */
+  logIndex: number;
   blockNumber: bigint;
   blockTimestamp: bigint;
   from: Address;
@@ -604,7 +645,7 @@ export async function scanOpDeposits(opts: {
   chunk: bigint;
   throttleMs?: number;
   logger: Logger;
-}): Promise<{ logsSeen: number; gaps: Array<{ from: bigint; to: bigint; reason: string }>; records: DepositRecord[] }> {
+}): Promise<{ logsSeen: number; gaps: Array<{ from: bigint; to: bigint; reason: string }>; records: DepositRecord[]; dropped: number }> {
   const { logs, gaps } = await getLogsChunked(
     opts.client,
     { address: opts.portal, event: TRANSACTION_DEPOSITED_EVENT, range: opts.range, chunk: opts.chunk, throttleMs: opts.throttleMs, retries: 3 },
@@ -613,17 +654,22 @@ export async function scanOpDeposits(opts: {
 
   const decoded = logs as Array<{
     transactionHash: Hex;
+    logIndex: number;
     blockNumber: bigint;
     args: { from?: Address; to?: Address; opaqueData?: Hex };
   }>;
 
   const records: DepositRecord[] = [];
   const blockCache = await blockTimestamps(opts.client, decoded.map((d) => d.blockNumber), 8, opts.logger);
+  let dropped = 0;
   for (const d of decoded) {
     const from = d.args.from ?? ("0x" as Address);
     const to = d.args.to ?? ("0x" as Address);
     const ts = blockCache.get(d.blockNumber.toString());
-    if (ts === undefined) continue;
+    if (ts === undefined) {
+      dropped += 1;
+      continue;
+    }
     records.push({
       classified: classifyOpDeposit({
         from,
@@ -633,6 +679,7 @@ export async function scanOpDeposits(opts: {
         opaqueDataBytes: ((d.args.opaqueData?.length ?? 2) - 2) / 2,
       }),
       txHash: d.transactionHash,
+      logIndex: d.logIndex,
       blockNumber: d.blockNumber,
       blockTimestamp: ts,
       from,
@@ -640,6 +687,9 @@ export async function scanOpDeposits(opts: {
     });
   }
 
-  opts.logger.info({ total: decoded.length }, "TransactionDeposited scanned - all Class C by construction");
-  return { logsSeen: decoded.length, gaps, records };
+  if (dropped > 0) {
+    opts.logger.error({ dropped, kept: records.length }, "deposits examined but NOT stored");
+  }
+  opts.logger.info({ total: decoded.length, dropped }, "TransactionDeposited scanned - all Class C by construction");
+  return { logsSeen: decoded.length, gaps, records, dropped };
 }

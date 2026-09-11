@@ -17,12 +17,16 @@ that looked wrong is how a fishing expedition works, so EVERY cell and EVERY
 latency metric is tested here and all results are reported, including the
 uninteresting ones.
 
-TWO TESTS, BECAUSE THEY FAIL ON DIFFERENT SHAPES.
+THREE TESTS, BECAUSE THEY FAIL ON DIFFERENT SHAPES.
   Spearman rho of value against collection index catches a MONOTONE trend.
   Wald-Wolfowitz runs against the median catches REGIME CHANGE - an early fast
-  phase and a later slow one - which can leave rho near zero while the sample
-  is plainly not exchangeable.
-A sample needs to pass both to be treated as exchangeable.
+  phase and a later slow one - which can leave rho near zero.
+  Brown-Forsythe on first half against second half catches a DISPERSION change
+  with a stable median, which is invisible to both of the above because they
+  are tests of location. This was added after the first two failed to reject in
+  a cell whose first-half IQR was several times its second-half IQR: the tests
+  were aimed to one side of the anomaly.
+A sample needs to pass all three to be treated as exchangeable.
 
 Stdlib only, like the other checks here: the estimators live in
 nonparametric.py, Spearman's p-value is a seeded permutation test, and the runs
@@ -36,7 +40,7 @@ import csv
 import statistics
 from collections import defaultdict
 
-from nonparametric import PERMUTATION_SEED, runs_test, spearman_rho
+from nonparametric import PERMUTATION_SEED, brown_forsythe, runs_test, spearman_rho
 
 RULE = "=" * 78
 
@@ -85,7 +89,10 @@ def main() -> None:
 
     flagged: list[str] = []
     print(RULE)
-    print(f"{'cell':<22} {'metric':<7} {'n':>3}  {'rho':>7} {'p_rho':>8}  {'runs':>5} {'exp':>6} {'p_runs':>8}  note")
+    print(
+        f"{'cell':<22} {'metric':<7} {'n':>3}  {'rho':>7} {'p_rho':>8}  {'runs':>5} {'exp':>6} {'p_runs':>8}"
+        f"  {'BF':>7} {'p_BF':>8}  {'IQR1':>7} {'IQR2':>7}  note"
+    )
     print(RULE)
 
     for cell in sorted(cells):
@@ -95,6 +102,8 @@ def main() -> None:
                 continue
             sp = spearman_rho(v)
             rt = runs_test(v)
+            h = len(v) // 2
+            bf = brown_forsythe(v[:h], v[h:])
             label = f"{cell[0]}/{cell[1]}"
             runs_s = "n/a" if rt.runs is None else str(rt.runs)
             exp_s = "n/a" if rt.expected is None else f"{rt.expected:.1f}"
@@ -107,9 +116,18 @@ def main() -> None:
             if rt.p is not None and rt.p < ALPHA:
                 mark += " <-REGIME"
                 flagged.append(f"{label} {metric}: runs={rt.runs} vs expected {rt.expected:.1f}, p={rt.p:.4f}")
+            if bf.p == bf.p and bf.p < ALPHA:
+                mark += " <-DISPERSION"
+                flagged.append(
+                    f"{label} {metric}: Brown-Forsythe W={bf.statistic:.3f}, p={bf.p:.4f} "
+                    f"(IQR {bf.spread_a:.1f} -> {bf.spread_b:.1f})"
+                )
+            bf_s = "n/a" if bf.statistic != bf.statistic else f"{bf.statistic:.3f}"
+            bfp_s = "n/a" if bf.p != bf.p else f"{bf.p:.4f}"
             print(
                 f"{label:<22} {metric:<7} {sp.n:>3}  {sp.rho:>+7.3f} {sp.p:>8.4f}  "
-                f"{runs_s:>5} {exp_s:>6} {prun_s:>8}  {note}{mark}"
+                f"{runs_s:>5} {exp_s:>6} {prun_s:>8}  {bf_s:>7} {bfp_s:>8}  "
+                f"{bf.spread_a:>7.1f} {bf.spread_b:>7.1f}  {note}{mark}"
             )
 
     print(RULE)

@@ -293,6 +293,90 @@ def runs_test(values: list[float]) -> RunsResult:
     return RunsResult(runs, n1, n2, n_tied, expected, min(1.0, p), "exact")
 
 
+
+@dataclass(frozen=True)
+class BrownForsytheResult:
+    statistic: float
+    p: float
+    n_a: int
+    n_b: int
+    spread_a: float
+    spread_b: float
+    note: str
+
+
+def brown_forsythe(a: list[float], b: list[float]) -> BrownForsytheResult:
+    """Brown-Forsythe test for equal dispersion between two groups.
+
+    WHY IT IS NEEDED HERE. Spearman and the runs test are both tests of
+    LOCATION order. A sample whose median holds steady while its spread
+    collapses - an unstable early phase settling into a stable later one - is
+    invisible to both, and that is exactly the shape observed in one cell. This
+    tests the spread directly.
+
+    Brown-Forsythe rather than classic Levene: it centres each group on its
+    MEDIAN rather than its mean, which is what makes it robust for skewed or
+    heavy-tailed data. Latency is both.
+
+    The p-value is a two-sided permutation test over group labels, seeded, for
+    the same reasons as spearman_rho: no F-distribution routine is needed, no
+    normality is assumed, and a reviewer can rerun it and get the same number.
+    """
+    n_a, n_b = len(a), len(b)
+    if n_a < 3 or n_b < 3:
+        return BrownForsytheResult(float("nan"), float("nan"), n_a, n_b, 0.0, 0.0, "groups too small")
+
+    def statistic(xa: list[float], xb: list[float]) -> float:
+        # Absolute deviations from each group's own median.
+        za = [abs(x - _median(xa)) for x in xa]
+        zb = [abs(x - _median(xb)) for x in xb]
+        n = len(za) + len(zb)
+        grand = (sum(za) + sum(zb)) / n
+        ma, mb = sum(za) / len(za), sum(zb) / len(zb)
+        between = len(za) * (ma - grand) ** 2 + len(zb) * (mb - grand) ** 2
+        within = sum((z - ma) ** 2 for z in za) + sum((z - mb) ** 2 for z in zb)
+        if within == 0:
+            # Every deviation identical: no dispersion difference to detect, and
+            # the ratio is undefined rather than infinite.
+            return 0.0
+        return (between * (n - 2)) / within
+
+    observed = statistic(a, b)
+    pool = a + b
+    rng = random.Random(PERMUTATION_SEED)
+    at_least = 0
+    for _ in range(PERMUTATIONS):
+        rng.shuffle(pool)
+        if statistic(pool[:n_a], pool[n_a:]) >= observed - 1e-12:
+            at_least += 1
+    p = (at_least + 1) / (PERMUTATIONS + 1)
+
+    # Reported as IQRs because that is what the draft quotes; the test itself
+    # uses absolute deviations from the median, not the IQR.
+    return BrownForsytheResult(observed, p, n_a, n_b, _iqr(a), _iqr(b), "permutation")
+
+
+def _median(x: list[float]) -> float:
+    s = sorted(x)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def _quantile(x: list[float], q: float) -> float:
+    """Linear interpolation between order statistics (numpy's default)."""
+    s = sorted(x)
+    if len(s) == 1:
+        return s[0]
+    k = (len(s) - 1) * q
+    f = math.floor(k)
+    c = min(f + 1, len(s) - 1)
+    return s[f] + (s[c] - s[f]) * (k - f)
+
+
+def _iqr(x: list[float]) -> float:
+    return _quantile(x, 0.75) - _quantile(x, 0.25)
+
+
 def _selftest() -> int:
     failures = 0
 

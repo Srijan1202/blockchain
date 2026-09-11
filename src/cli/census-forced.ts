@@ -221,12 +221,13 @@ async function main(): Promise<void> {
         chain_key: chain.key,
         class: classified.class,
         tx_hash: t.txHash,
+        log_index: t.logIndex,
         block_number: Number(t.blockNumber),
         block_timestamp: Number(t.blockTimestamp),
         evidence: `${classified.evidence}; source=logcensus/${source.host}; actor=${tx === null ? "unknown" : tx.from}`,
       });
-      db.prepare("UPDATE mainnet_events SET scan_id = ?, actor = ? WHERE chain_key = ? AND tx_hash = ? AND class = ?")
-        .run(scanId, tx === null ? null : tx.from, chain.key, t.txHash, classified.class);
+      db.prepare("UPDATE mainnet_events SET scan_id = ?, actor = ? WHERE chain_key = ? AND tx_hash = ? AND log_index = ? AND class = ?")
+        .run(scanId, tx === null ? null : tx.from, chain.key, t.txHash, t.logIndex, classified.class);
     } catch (err) {
       if (!String(err).includes("UNIQUE")) throw err;
     }

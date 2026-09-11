@@ -1,6 +1,6 @@
 # Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups
 
-**Draft — sections 1-6 and 9-12.** Related Work and Conclusion are not drafted yet (citations pending verification).
+**Draft — sections 1-6, 9-12 and 14.** Related Work (section 13) is not drafted; citations pending verification.
 
 > **Provenance rule for this document.** Every quantitative claim carries a bracketed source:
 > `[E2]` the 100-run public-testnet dataset (`data/export.csv`); `[E1]` the controlled devnet
@@ -701,20 +701,33 @@ the mechanism rather than about our sampling.
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
 | Arbitrum One | SequencerInbox | **15,411,056–25,951,325 (10,540,270, contiguous)** | **1,332,810 batches** | **0** | — | — | — |
-| Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
-| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **344** | 0 |
-| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,067** | 0 |
+| Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,637 | 9 |
+| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
+| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
-**"Events examined" and the class columns are different counts, and the gap is an artifact of
-our schema rather than of the data.** `mainnet_events` is keyed
-`UNIQUE(chain_key, tx_hash, class)`, so when one L1 transaction emits several events of the
-same class — a batched bridge deposit, say — only the first becomes a row. Across these three
-scans the row counts equal the distinct-transaction counts exactly: 344 of 362 OP deposits,
-1,067 of 1,095 Base deposits, and 2,635 of 2,646 Arbitrum messages, losing 18, 28 and 11
-respectively. It does not touch the Class A result, which is counted from `logs_seen` on the
-raw log stream before any row is written, but the class columns above should be read as
-"transactions containing at least one such event". We record it as a known limitation rather
-than restate the counts as though they were event counts.
+**Every examined event is now a stored row**, and the class columns sum exactly to the events
+examined in all three scans. Reaching that took two corrections, both of which had silently
+suppressed rows in earlier versions of this table, and both of which are recorded here because
+they are instructive rather than because they changed a conclusion.
+
+The first was a schema defect. `mainnet_events` was keyed
+`UNIQUE(chain_key, tx_hash, class)`, so when one L1 transaction emitted several events of the
+same class — a batched bridge deposit, say — only the first became a row. Row counts equalled
+distinct-*transaction* counts exactly, losing 18 of 362 OP deposits, 28 of 1,095 Base deposits
+and 11 of 2,646 Arbitrum messages. The key now includes the log's index within its block, which
+is what actually identifies an event.
+
+The second was worse, because it was load-dependent and therefore irreproducible. The indexer
+resolves block timestamps in parallel and skipped any event whose block fetch failed; under a
+rate-limiting endpoint this silently dropped a further 44 Arbitrum messages. Timestamp fetches
+are now retried (the corrected run recovered 170 blocks that failed on first attempt), any
+event that still cannot be stored is counted, logged at error level, and written into the
+scan's own record, and a scan with a non-zero drop count is not marked complete.
+
+**Neither affected the Class A result**, and the reason is structural rather than lucky: the
+Class A count and its denominator are both taken from `logs_seen` on the raw log stream,
+before any row is written, so no defect in this table's row-keeping can reach them. The
+headline did not move at either correction.
 
 Only the Arbitrum One SequencerInbox scan is full-history; the other three are bounded windows
 and are reported as such. Ranges are disjoint per target, so the counts sum to valid
@@ -733,19 +746,18 @@ class is for.
 
 ### 10.5 The sharpest form of the result: zero escape-hatch messages
 
-Across the Arbitrum One delayed-inbox messages we classified, **not one was kind 3
+Of the 2,646 `MessageDelivered` events on Arbitrum One we classified, **not one was kind 3
 (`L2_MSG`)** — the delayed-inbox path a user takes to submit a signed transaction bypassing the
 sequencer [M]:
 
 | kind | meaning | count |
 |---|---|---|
 | 13 | batch-posting report (protocol bookkeeping) | 2,070 |
-| 9 | retryable ticket (bridging) | 520 |
+| 9 | retryable ticket (bridging) | 531 |
 | 12 | ETH deposit (bridging) | 45 |
 | **3** | **`L2_MSG` — the escape hatch** | **0** |
 
-These sum to 2,635 rows, against 2,646 events examined; the 11-event difference is the schema
-artifact described in §10.3, and no plausible assignment of those 11 changes a zero.
+These sum to 2,646, every message examined, with nothing unaccounted for.
 
 This reproduces on mainnet what we measured on Arbitrum Sepolia: 0 of 25,617 delayed messages
 over about 17 days (120,000 L1 blocks) were kind 3, the remainder being 19,251 batch-posting
@@ -759,8 +771,7 @@ escape-hatch messages" from "these are not escape-hatch messages at all".
 
 ### 10.6 OP Stack deposits: 1,457 events, all Class C by construction
 
-362 deposit events on OP Mainnet and 1,095 on Base — 1,411 rows after the transaction-level
-deduplication described in §10.3 — every one Class C [M]. This is a statement about
+362 deposit events on OP Mainnet and 1,095 on Base, every one Class C [M]. This is a statement about
 what the data can support, not a finding about usage: `TransactionDeposited` is emitted
 identically whether it carries routine bridging or a user routing around a stalled sequencer,
 and no field distinguishes them. We therefore report OP deposits as **mechanism usage** and
@@ -1072,7 +1083,7 @@ forced cell's observed half-width comfortably qualifies and the three fine-targe
 measuring quantities at or below their clock's granularity, where more samples change nothing.
 The conclusion is likely right; the argument that produced it was not.
 
-#### Exchangeability: tested, not rejected, and not established either
+#### Exchangeability: rejected for one cell, on the dimension that matters
 
 Bootstrap CIs resample observations as though collection order carried no information. One cell
 looked like it might violate that: in arb-sepolia/forced, the five lowest M-L2 values
@@ -1080,52 +1091,66 @@ looked like it might violate that: in arb-sepolia/forced, the five lowest M-L2 v
 series settles near its 766 s median.
 
 We tested it rather than leaving it as an impression, and tested **every** cell and metric
-rather than only the one that looked wrong. Two tests, because they fail on different shapes:
+rather than only the one that looked wrong. Three tests, because they fail on different shapes:
 Spearman's ρ of value against collection index catches a monotone trend; a Wald–Wolfowitz runs
-test against the median catches a regime change, which can leave ρ near zero. Spearman p-values
-are seeded permutation tests; the runs null is enumerated exactly rather than
-normal-approximated, because after dropping ties the group sizes are around ten [E2].
+test against the median catches a regime change, which can leave ρ near zero; and a
+Brown–Forsythe test of first half against second half catches a change in *dispersion* with a
+stable median, which both of the others are blind to because they are tests of location.
+Spearman and Brown–Forsythe p-values are seeded permutation tests; the runs null is enumerated
+exactly rather than normal-approximated, because after dropping ties the group sizes are around
+ten [E2].
 
-| Cell | metric | ρ | p(ρ) | runs | expected | p(runs) |
-|---|---|---|---|---|---|---|
-| arb-sepolia / forced | M-L1 | −0.258 | 0.201 | 11 | 10.6 | 1.000 |
-| arb-sepolia / forced | M-L2 | +0.343 | 0.092 | 11 | 13.0 | 0.526 |
-| arb-sepolia / forced | M-L3 | +0.153 | 0.465 | 11 | 11.9 | 0.820 |
-| arb-sepolia / normal | M-L4 | −0.340 | 0.079 | — | — | not computable |
-| op-sepolia / forced | M-L1 | +0.082 | 0.693 | 10 | 9.9 | 1.000 |
-| op-sepolia / forced | M-L2 | −0.121 | 0.566 | 12 | 10.9 | 0.650 |
-| op-sepolia / forced | M-L3 | −0.079 | 0.705 | 14 | 12.5 | 0.670 |
-| op-sepolia / normal | M-L4 | +0.027 | 0.904 | 4 | 6.5 | 0.199 |
+| Cell | metric | ρ | p(ρ) | runs | exp | p(runs) | BF | p(BF) | IQR 1st → 2nd |
+|---|---|---|---|---|---|---|---|---|---|
+| arb-sepolia / forced | M-L1 | −0.258 | 0.201 | 11 | 10.6 | 1.000 | 5.848 | **0.019** | 6.5 → 2.0 |
+| arb-sepolia / forced | M-L2 | +0.343 | 0.092 | 11 | 13.0 | 0.526 | 2.915 | **0.045** | 69.2 → 9.0 |
+| arb-sepolia / forced | M-L3 | +0.153 | 0.465 | 11 | 11.9 | 0.820 | 2.936 | **0.050** | 76.2 → 10.0 |
+| arb-sepolia / normal | M-L4 | −0.340 | 0.079 | — | — | not computable | 1.087 | 0.479 | 0.0 → 0.0 |
+| op-sepolia / forced | M-L1 | +0.082 | 0.693 | 10 | 9.9 | 1.000 | 0.006 | 0.966 | 1.2 → 2.0 |
+| op-sepolia / forced | M-L2 | −0.121 | 0.566 | 12 | 10.9 | 0.650 | 0.610 | 0.445 | 6.0 → 10.0 |
+| op-sepolia / forced | M-L3 | −0.079 | 0.705 | 14 | 12.5 | 0.670 | 1.143 | 0.295 | 9.8 → 18.0 |
+| op-sepolia / normal | M-L4 | +0.027 | 0.904 | 4 | 6.5 | 0.199 | 0.047 | 1.000 | 0.2 → 1.0 |
 
-**No cell shows drift or regime change at α = 0.05**, including the one that prompted the
-check. The runs test is not computable for arb-sepolia/normal M-L4 because 24 of its 25 values
-sit exactly on the median — the metric is quantised to 1–2 s — and we report that rather than
-substituting an approximation.
+**No cell shows drift or regime change**, including the one that prompted the check — ρ and the
+runs test are uniformly unremarkable. **But dispersion rejects, and only in the Arbitrum forced
+cell, for all three of its latency metrics.** Its spread collapses between the first and second
+half of collection while its median barely moves (763 s → 768 s for M-L2). The runs test is not
+computable for arb-sepolia/normal M-L4 because 24 of its 25 values sit exactly on the median —
+the metric is quantised to 1–2 s — and we report that rather than substituting an
+approximation.
 
-Three caveats keep this from being a clean bill of health.
+So the anomaly is **statistically supported, not merely visible**. Three qualifications keep
+that from being overstated:
 
-**Failing to reject is not establishing.** At n = 25 both tests have limited power, and
-arb-sepolia/forced M-L2 has ρ = +0.343 at p = 0.092 — the direction the early-low pattern
-predicts, at a p-value that a larger sample could easily push below 0.05.
+**The p-values are marginal, and there are eight cell/metric combinations tested three ways.**
+0.019, 0.045 and 0.050 would not survive a correction for that multiplicity. We report them
+uncorrected and say so, rather than either hiding the multiplicity or using it to dismiss an
+effect that is plainly visible in the raw series.
 
-**Neither test targets the thing that actually looks odd.** Both are tests of *location* order.
-The visible anomaly in that cell is a change in *dispersion* with a stable median: its
-first-half median is 763 s against a second-half 768 s, essentially unchanged, while the
-first-half IQR is **69.2 s** against the second half's **9.0 s**, a ratio of 7.7× (quartiles by
-linear interpolation) [E2]. A variance change with a stable median is invisible to both ρ and a
-runs test against the median, so "not rejected" by these two does not cover it.
+**The three flagged metrics are one finding, not three.** M-L1, M-L2 and M-L3 are computed over
+overlapping stage spans of the same 25 runs, so they are not independent evidence.
 
-**So the honest position is agnostic.** The bootstrap CI for that cell is not demonstrably
-invalid, and it is not demonstrably sound either; the exchangeability it assumes survived a
-check that was underpowered and aimed slightly to one side of the suspicion.
+**Location tests were the wrong instrument, and we only learned that by adding a third.** ρ and
+the runs test were the natural first choices and both failed to reject; the effect was real and
+simply orthogonal to what they measure. A negative result from a test aimed at the wrong moment
+of the distribution is not evidence of absence, and we record that as a methods lesson.
+
+The practical consequence: **for arb-sepolia/forced, the bootstrap CI rests on an
+exchangeability assumption the data rejects.** The interval is not thereby wrong — the
+high-variance phase is a minority of the sample and the median is stable across halves — but it
+is no longer supported by the argument originally given for it, and the same applies to the
+n = 25 sizing conclusion for that cell, which resamples the same non-exchangeable series.
 
 **What would resolve it is a design change, not more analysis.** Cells here were collected
 consecutively, so anything that varied over wall-clock time — sequencer warm-up, an L1 fee
 regime, a provider's behaviour — is confounded with cell identity and appears as within-cell
-order structure. **Interleaving cells during collection**, round-robin rather than
-block-by-block, would spread any temporal effect evenly across cells and turn it into noise
-instead of structure. We recommend that to anyone repeating this, and we note it as a defect of
-our own design rather than a property of the chains.
+order structure. That the effect appears in one chain's forced cell and not the other's is
+consistent with a transient specific to when that block of runs happened — which is exactly
+what consecutive collection cannot distinguish from a property of the chain.
+**Interleaving cells during collection**, round-robin rather than block-by-block, would spread
+any temporal effect evenly across cells and turn it into noise instead of structure. We
+recommend it to anyone repeating this, and record it as a defect of our own design rather than
+a property of the chains.
 
 ### 12.5 Every result is a version snapshot
 
@@ -1177,3 +1202,89 @@ forced-path cost. We did not vary L1 congestion, so **H3 is untested** and the r
 between base fee and forced-path entry remains unmeasured. And we cover two protocol families;
 validity-proof rollups with priority-queue designs are out of scope, so nothing here should be
 read as a general claim about L2 censorship resistance beyond Arbitrum Nitro and the OP Stack.
+
+---
+
+## 14. Conclusion
+
+We set out to measure what it costs a user to invoke the escape hatch that every security
+argument for an optimistic rollup depends on. Three measurements answer that: a 100-run
+controlled comparison on public testnets, a devnet experiment in which we operated the
+sequencer and censored a specific transaction, and a census of the mechanism's complete
+history on Ethereum mainnet.
+
+The census is the result we did not expect to be so clean. **`forceInclusion` has never been
+successfully called on Arbitrum One** — zero in 1,332,810 batches across a contiguous
+10,540,270 L1 blocks, from the SequencerInbox's deployment to chain head, with an exact
+binomial bound of 2.77 × 10⁻⁶ on the rate [M]. The candidate set was empty before any
+classification condition applied: of the batches the census enumerated, not one carried the
+`NoData` marker that a forced inclusion produces. Nor did a single user-submitted escape-hatch
+message appear among the delayed-inbox messages we classified.
+
+What makes that more than a curiosity is §9.5. On a healthy chain the mechanism's two
+preconditions — delay elapsed, message still unread — are mutually exclusive, and our messages
+reached L2 a median of 23.79 hours *before* they became force-eligible [E2]. The hatch is not
+unused because users are indifferent. It is unused because it is closed except during the
+failure it exists for.
+
+**A guarantee in this position has been validated the way a specification is validated, not
+the way a running system is.** Nobody has exercised it, nobody can rehearse it, and the first
+execution of the path will happen under adversarial conditions with no prior evidence that the
+surrounding tooling works. We offer our own experience as the cheapest available illustration:
+our harness called a function that does not exist, and the error survived implementation,
+review and a hundred testnet runs because the code path is unreachable while the sequencer
+behaves. We found it by reading deployed source. The contract itself is widely read and we
+allege nothing about it — the point is about the class of defect that unexercised paths
+accumulate, in code and equally in wallets, runbooks and operator familiarity.
+
+The measurements also show that the two architectures differ in kind rather than degree. One
+requires two L1 transactions and an aliased-address reconstruction; the other requires one and
+nothing else, and its absent force call is a finding rather than a gap in our implementation.
+Their costs are not comparable in the way a single total suggests: Arbitrum bills in two
+places, 94.8% on L1 and the rest on L2, while an OP Stack deposit prepays its execution on L1
+and bills once [E2]. A reader comparing totals alone would conclude Arbitrum is about 19%
+cheaper and would have compared two different kinds of quantity. And forcing is batch-priced —
+one call sweeps every message queued ahead of the caller, five for one user in our single
+devnet observation (**n = 1**) — so the price of recourse is set by a queue depth the user can
+neither see in advance nor control [E1]. Whether that is a griefing surface or a public good
+is the sharpest question we leave open, and it is open precisely because there are no mainnet
+forced inclusions from which to draw the distribution.
+
+### What a future study should do differently
+
+Three of our own design decisions were wrong in ways worth passing on.
+
+**Interleave the cells.** We collected each experimental cell as a consecutive block of runs,
+which confounds anything varying over wall-clock time with cell identity. A Brown–Forsythe test
+rejects equal dispersion between the first and second halves of the Arbitrum forced cell
+(p = 0.019–0.050 across its three latency metrics), and consecutive collection is exactly what
+prevents us from telling a transient apart from a property of the chain [E2]. Round-robin
+collection would turn such an effect into noise instead of structure.
+
+**Size the sample against the clock, not against the median.** Our ±10%-of-median precision
+target is finer than the clock resolution in three of the four cells, so no sample size could
+have met it — a specification error rather than a sampling shortfall. A target expressed in
+units of the instrument's own resolution, such as a half-width within one `l1_block` tick, is
+always askable, cannot silently become impossible when a median is small, and can be fixed in
+advance, which is what a sizing criterion must do. Our n = 25 may well be adequate; the
+argument originally given for it was not.
+
+**Instrument the measurement to fail loudly on a known positive.** A null result is
+unfalsifiable by construction unless the instrument's failure modes are enumerated in advance,
+because "we looked and found nothing" and "our tooling silently returned nothing" produce
+identical output. Every measurement error we found in this project was silent, plausible, and
+biased toward the conclusion we were testing — a provider-side filter returning zero for a
+selector we had just observed, an analysis dropping rows from a binomial denominator,
+overlapping ranges narrowing a confidence interval, a uniqueness key collapsing distinct
+events, and parallel fetches discarding events whose block lookup failed under load. None was
+caught by a result looking wrong. Each was caught by a check built to catch it: a positive
+control against a known-present selector, a denominator reconciliation, contiguity and overlap
+detection, and a rule that a scan is not complete unless every examined event became a row.
+
+Finally, the open questions. **H5 — whether the delay buffer inverts the worst case under
+sustained censorship — is untested**, because buffer depletion is retroactive and a single
+incident cannot move it; a multi-round depletion curve would settle it. So would a
+congestion-varying campaign for H3, and a batch-size distribution if a mainnet forced inclusion
+ever occurs. We would also note that the most useful thing an operator could do is make the
+mechanism rehearsable, since nothing in our results suggests the escape hatch does not work,
+and everything in them suggests nobody has ever found out.
