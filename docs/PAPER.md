@@ -702,8 +702,19 @@ the mechanism rather than about our sampling.
 |---|---|---|---|---|---|---|---|
 | Arbitrum One | SequencerInbox | **15,411,056–25,951,325 (10,540,270, contiguous)** | **1,332,810 batches** | **0** | — | — | — |
 | Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
-| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
-| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
+| OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **344** | 0 |
+| Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,067** | 0 |
+
+**"Events examined" and the class columns are different counts, and the gap is an artifact of
+our schema rather than of the data.** `mainnet_events` is keyed
+`UNIQUE(chain_key, tx_hash, class)`, so when one L1 transaction emits several events of the
+same class — a batched bridge deposit, say — only the first becomes a row. Across these three
+scans the row counts equal the distinct-transaction counts exactly: 344 of 362 OP deposits,
+1,067 of 1,095 Base deposits, and 2,635 of 2,646 Arbitrum messages, losing 18, 28 and 11
+respectively. It does not touch the Class A result, which is counted from `logs_seen` on the
+raw log stream before any row is written, but the class columns above should be read as
+"transactions containing at least one such event". We record it as a known limitation rather
+than restate the counts as though they were event counts.
 
 Only the Arbitrum One SequencerInbox scan is full-history; the other three are bounded windows
 and are reported as such. Ranges are disjoint per target, so the counts sum to valid
@@ -722,15 +733,19 @@ class is for.
 
 ### 10.5 The sharpest form of the result: zero escape-hatch messages
 
-Of 2,646 `MessageDelivered` events on Arbitrum One, **not one was kind 3 (`L2_MSG`)** — the
-delayed-inbox path a user takes to submit a signed transaction bypassing the sequencer [M]:
+Across the Arbitrum One delayed-inbox messages we classified, **not one was kind 3
+(`L2_MSG`)** — the delayed-inbox path a user takes to submit a signed transaction bypassing the
+sequencer [M]:
 
 | kind | meaning | count |
 |---|---|---|
-| 13 | batch-posting report (protocol bookkeeping) | 2,066 |
-| 9 | retryable ticket (bridging) | 515 |
+| 13 | batch-posting report (protocol bookkeeping) | 2,070 |
+| 9 | retryable ticket (bridging) | 520 |
 | 12 | ETH deposit (bridging) | 45 |
 | **3** | **`L2_MSG` — the escape hatch** | **0** |
+
+These sum to 2,635 rows, against 2,646 events examined; the 11-event difference is the schema
+artifact described in §10.3, and no plausible assignment of those 11 changes a zero.
 
 This reproduces on mainnet what we measured on Arbitrum Sepolia: 0 of 25,617 delayed messages
 over about 17 days (120,000 L1 blocks) were kind 3, the remainder being 19,251 batch-posting
@@ -744,7 +759,8 @@ escape-hatch messages" from "these are not escape-hatch messages at all".
 
 ### 10.6 OP Stack deposits: 1,457 events, all Class C by construction
 
-362 deposits on OP Mainnet and 1,095 on Base, every one Class C [M]. This is a statement about
+362 deposit events on OP Mainnet and 1,095 on Base — 1,411 rows after the transaction-level
+deduplication described in §10.3 — every one Class C [M]. This is a statement about
 what the data can support, not a finding about usage: `TransactionDeposited` is emitted
 identically whether it carries routine bridging or a user routing around a stalled sequencer,
 and no field distinguishes them. We therefore report OP deposits as **mechanism usage** and
@@ -1011,32 +1027,105 @@ quantity — **larger than 70 s**. So the honest statement is not "the E2 clocks
 but "the L2 clock did not trail by more than 70 s at any E2 observation". Had E2 been collected
 under comparable sequencer load, the check could have failed.
 
-### 12.4 Medians are well estimated; tails are not
+### 12.4 Medians are well estimated; tails are not, and the sizing criterion was mis-specified
 
 With n = 25 per cell, our latency medians are supported and our tails are not. We state this
 sharply because it bounds which claims the dataset licenses.
 
 The observed spread is tight. For the forced-path M-L2 cells, max/median is **1.03×** on
-Arbitrum Sepolia and **1.18×** on OP Sepolia; the largest ratio across every latency and cost metric in the dataset is **2.62×**, on Arbitrum's M-L1 [E2]. That tightness is not reassurance about the tail — it is an
-absence of evidence about it. Twenty-five draws from a well-behaved period cannot exclude a
-rare slow case that simply did not occur, and resampling the observations cannot manufacture
-one, because a bootstrap can only draw values the sample already contains. **No claim in this
-paper rests on a p95 or p99, and the dataset does not support one.**
+Arbitrum Sepolia and **1.18×** on OP Sepolia; the largest ratio across every latency and cost
+metric in the dataset is **2.62×**, on Arbitrum's M-L1 [E2]. That tightness is not reassurance
+about the tail — it is an absence of evidence about it. Twenty-five draws from a well-behaved
+period cannot exclude a rare slow case that simply did not occur, and resampling cannot
+manufacture one, because a bootstrap can only draw values the sample already contains. **No
+claim in this paper rests on a p95 or p99, and the dataset does not support one.**
 
-Two further limits on precision, both worth stating rather than hiding:
+#### The ±10%-of-median sizing criterion was mis-specified
 
-**For three of the four cells, the conventional ±10%-of-median precision target is finer than
-the clock.** Ten percent of the OP Sepolia forced median is 7.6 s against a 12 s `l1_block`
-resolution; on the normal-path cells it is 0.3 s against 2 s, and 0.1 s against 0.25 s [E2]. No
-sample size delivers that, and a reported half-width below one clock tick would claim precision
-the instrument does not have. Only the Arbitrum forced cell has a well-posed target (76.6 s
-against 12 s).
+Our sample size was chosen against a target of a 95% CI half-width within ±10% of the median.
+**In three of the four cells that target is finer than the clock resolution, so no sample size
+could have met it** [E2]:
 
-**In that one well-posed cell, the sample may not be exchangeable.** Its four lowest values sit
-at collection positions **1, 2, 4 and 7 of 25**, and the first-half IQR is **73.8 s** against
-the second half's **11.5 s** [E2]. The minimum, 411 s, is 46% below the 766 s median. Something
-about the early part of that campaign differed, and a bootstrap CI assumes exchangeability it
-may not have. We report the interval with that caveat rather than quietly relying on it.
+| Cell | metric | ±10% of median | clock resolution | askable? |
+|---|---|---|---|---|
+| arb-sepolia / forced | M-L2 | 76.6 s | 12 s | yes |
+| op-sepolia / forced | M-L2 | **7.6 s** | 12 s | **no** |
+| arb-sepolia / normal | M-L4 | **0.1 s** | 0.25 s | **no** |
+| op-sepolia / normal | M-L4 | **0.3 s** | 2 s | **no** |
+
+This is a specification error, not a sampling shortfall. A half-width below one clock tick
+claims precision the instrument does not have, so the criterion was unsatisfiable by
+construction and reporting it as "met" would have been meaningless.
+
+**The criterion that would have been defensible expresses the target in units of clock
+resolution rather than as a percentage of the median** — for instance, a half-width within one
+`l1_block` tick (12 s), or within k ticks for a stated k. That target is always askable because
+it is denominated in the instrument's own units, it does not silently become impossible when a
+median is small, and it makes the precision claim directly checkable against the measurement
+apparatus. A percentage-of-median target is only well posed when the median is large relative
+to the clock, which is a property of the data rather than of the design — so it cannot be
+chosen in advance, which is exactly what a sizing criterion has to do.
+
+The consequence for the n = 25 conclusion is worth stating plainly: **n = 25 may well be
+adequate, but not for the reason originally given.** Against a one-tick target the Arbitrum
+forced cell's observed half-width comfortably qualifies and the three fine-target cells are
+measuring quantities at or below their clock's granularity, where more samples change nothing.
+The conclusion is likely right; the argument that produced it was not.
+
+#### Exchangeability: tested, not rejected, and not established either
+
+Bootstrap CIs resample observations as though collection order carried no information. One cell
+looked like it might violate that: in arb-sepolia/forced, the five lowest M-L2 values
+(411, 633, 693, 701, 752 s) all fall in the first seven collection positions, after which the
+series settles near its 766 s median.
+
+We tested it rather than leaving it as an impression, and tested **every** cell and metric
+rather than only the one that looked wrong. Two tests, because they fail on different shapes:
+Spearman's ρ of value against collection index catches a monotone trend; a Wald–Wolfowitz runs
+test against the median catches a regime change, which can leave ρ near zero. Spearman p-values
+are seeded permutation tests; the runs null is enumerated exactly rather than
+normal-approximated, because after dropping ties the group sizes are around ten [E2].
+
+| Cell | metric | ρ | p(ρ) | runs | expected | p(runs) |
+|---|---|---|---|---|---|---|
+| arb-sepolia / forced | M-L1 | −0.258 | 0.201 | 11 | 10.6 | 1.000 |
+| arb-sepolia / forced | M-L2 | +0.343 | 0.092 | 11 | 13.0 | 0.526 |
+| arb-sepolia / forced | M-L3 | +0.153 | 0.465 | 11 | 11.9 | 0.820 |
+| arb-sepolia / normal | M-L4 | −0.340 | 0.079 | — | — | not computable |
+| op-sepolia / forced | M-L1 | +0.082 | 0.693 | 10 | 9.9 | 1.000 |
+| op-sepolia / forced | M-L2 | −0.121 | 0.566 | 12 | 10.9 | 0.650 |
+| op-sepolia / forced | M-L3 | −0.079 | 0.705 | 14 | 12.5 | 0.670 |
+| op-sepolia / normal | M-L4 | +0.027 | 0.904 | 4 | 6.5 | 0.199 |
+
+**No cell shows drift or regime change at α = 0.05**, including the one that prompted the
+check. The runs test is not computable for arb-sepolia/normal M-L4 because 24 of its 25 values
+sit exactly on the median — the metric is quantised to 1–2 s — and we report that rather than
+substituting an approximation.
+
+Three caveats keep this from being a clean bill of health.
+
+**Failing to reject is not establishing.** At n = 25 both tests have limited power, and
+arb-sepolia/forced M-L2 has ρ = +0.343 at p = 0.092 — the direction the early-low pattern
+predicts, at a p-value that a larger sample could easily push below 0.05.
+
+**Neither test targets the thing that actually looks odd.** Both are tests of *location* order.
+The visible anomaly in that cell is a change in *dispersion* with a stable median: its
+first-half median is 763 s against a second-half 768 s, essentially unchanged, while the
+first-half IQR is **69.2 s** against the second half's **9.0 s**, a ratio of 7.7× (quartiles by
+linear interpolation) [E2]. A variance change with a stable median is invisible to both ρ and a
+runs test against the median, so "not rejected" by these two does not cover it.
+
+**So the honest position is agnostic.** The bootstrap CI for that cell is not demonstrably
+invalid, and it is not demonstrably sound either; the exchangeability it assumes survived a
+check that was underpowered and aimed slightly to one side of the suspicion.
+
+**What would resolve it is a design change, not more analysis.** Cells here were collected
+consecutively, so anything that varied over wall-clock time — sequencer warm-up, an L1 fee
+regime, a provider's behaviour — is confounded with cell identity and appears as within-cell
+order structure. **Interleaving cells during collection**, round-robin rather than
+block-by-block, would spread any temporal effect evenly across cells and turn it into noise
+instead of structure. We recommend that to anyone repeating this, and we note it as a defect of
+our own design rather than a property of the chains.
 
 ### 12.5 Every result is a version snapshot
 
