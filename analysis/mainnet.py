@@ -78,7 +78,12 @@ def report_coverage(conn: sqlite3.Connection) -> dict[str, int]:
         if r["target_label"].startswith("SequencerInbox"):
             denominators[r["chain_key"]] = denominators.get(r["chain_key"], 0) + r["logs_seen"]
         if not r["complete"]:
-            print(f"  {'':<14} {'':<16} !! coverage has holes - counts are a LOWER BOUND")
+            # "Incomplete" means the walk stopped before its REQUESTED end, not
+            # that the recorded range has holes: both routes truncate to_block
+            # to what was actually reached, and the getLogs route records any
+            # internal gap in `notes`. Conflating the two used to print a
+            # "lower bound" warning for a range that was exactly covered.
+            print(f"  {'':<14} {'':<16} note: stopped before its requested end; the range above is what it did cover")
 
     # Overlapping ranges would be summed twice into the binomial denominator,
     # inflating n and shrinking the CI - i.e. failing in the direction that
@@ -102,6 +107,25 @@ def report_coverage(conn: sqlite3.Connection) -> dict[str, int]:
         print("     Deduplicate the scans before quoting any rate.")
     else:
         print("\n  ranges are disjoint per target: logs_seen sums to a valid denominator")
+
+    # Contiguity is strictly stronger than disjointness, and it is what licenses
+    # a phrase like "across all of Nitro-era history": disjoint ranges can still
+    # leave unexamined blocks between them, and a Class A event could sit in the
+    # gap. Printed per target so the claim can be checked rather than trusted.
+    for key, items in sorted(spans.items()):
+        ordered = sorted(items)
+        holes = [
+            (a_hi + 1, b_lo - 1)
+            for (_, a_hi, _), (b_lo, _, _) in zip(ordered, ordered[1:])
+            if b_lo > a_hi + 1
+        ]
+        lo = ordered[0][0]
+        hi = max(i[1] for i in ordered)
+        if holes:
+            shown = ", ".join(f"{a}-{b}" for a, b in holes[:3])
+            print(f"  {key}: {lo}..{hi} has {len(holes)} UNEXAMINED gap(s): {shown}")
+        else:
+            print(f"  {key}: CONTIGUOUS {lo}..{hi} ({hi - lo + 1:,} blocks, no unexamined gaps)")
     return denominators
 
 

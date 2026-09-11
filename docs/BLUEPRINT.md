@@ -436,22 +436,31 @@ archive depth or a usable `getLogs` span, rarely both).
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
-| Arbitrum One | SequencerInbox (RPC getLogs) | 24,949,045–25,949,044 (1,000,000) | 101,111 batches | **0** | – | – | – |
-| Arbitrum One | SequencerInbox (explorer census) | 15,411,056–15,674,870 (263,815) | 8,992 batches | **0** | – | – | – |
+| Arbitrum One | SequencerInbox | **15,411,056–25,949,044 (10,537,989 — all of Nitro)** | **1,332,631 batches** | **0** | – | – | – |
 | Arbitrum One | Bridge | 25,929,045–25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
 | OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
 | Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
-**Class A = 0 in 110,103 batches across two disjoint windows.** Exact binomial
-(Clopper–Pearson) 95% CI on the rate: **[0, 3.35 × 10⁻⁵]**. Stated the way it should be
-quoted: *no forced inclusion occurred in 1,263,815 L1 blocks, and the data is consistent with
-a true rate as high as roughly one per 29,800 batches.* Zero observed is not zero possible.
-Coverage is **12.0% of Nitro-era history** (1,263,815 of 10,537,989 blocks).
+**Class A = 0 across ALL of Nitro-era history.** 1,332,631 `SequencerBatchDelivered` events
+over a **contiguous** 10,537,989 L1 blocks — from 15,411,056, where the SequencerInbox proxy
+first has code, to 25,949,044 — with **no unexamined gaps**. Exact binomial (Clopper–Pearson)
+95% CI on the rate: **[0, 2.77 × 10⁻⁶]**, i.e. at most about one per 361,000 batches.
+
+**`forceInclusion` has never been called successfully on Arbitrum One.** Not "rarely"; the
+count is zero over the mechanism's entire lifetime to block 25,949,044.
+
+The whole batch population is accounted for, which is stronger than a filtered count: across
+the 1,231,520 batches enumerated by the log census, `dataLocation` was TxInput 592,318,
+Blob 639,201, SeparateBatchEvent 1, and **NoData 0**. NoData is what `forceInclusion`
+produces, so the candidate set was empty before any of the four Class A conditions were even
+applied. (The remaining 101,111 batches come from the earlier RPC scans, which reported 0
+NoData over their range.)
 
 ### 12.2 Attempt to extend to full Nitro-era history (2026-09-11)
 
-The window above is **1,000,000 of 10,537,989 Nitro-era blocks = 9.5%**. An attempt to cover
-the rest established two things worth keeping and did not widen the denominator.
+§12.1 originally covered 1,000,000 of 10,537,989 Nitro-era blocks. Closing the remaining 90%
+established two things worth keeping, and took two attempts because the obvious route is the
+wrong one.
 
 **Verified: one address and one selector cover all of Nitro-era history.** This had to be
 checked, because the surrounding contracts did change.
@@ -482,9 +491,14 @@ bytes rather than ~199 KB, every `forceInclusion` emits one with `dataLocation =
 the same Etherscan-format API exposes `module=logs`. `npm run census` implements this, filters
 `dataLocation` locally, and runs a positive control before trusting any result. It added the
 15,411,056–15,674,870 window (8,992 batches, 0 Class A) before the free endpoint's quota
-stopped it, lifting coverage from 9.5% to 12.0%.
+stopped it; with a free Etherscan key the same code then covered the whole Nitro era.
 
-**Still not achieved: full coverage.** The remaining routes are blocked on free infrastructure.
+**Achieved 2026-09-11 with a free Etherscan key.** The log census covered the full Nitro era
+in ~1,000 requests, well inside the free tier's 100k/day. Two interruptions (a dropped
+connection, twice) were handled by recording the range actually reached and resuming from it,
+which is why the coverage table shows one truncated range followed by contiguous chunks.
+The routes below are recorded because they were tried and are the reason the census is
+log-based rather than transaction-based.
 
 | Route | Outcome |
 |---|---|
@@ -494,11 +508,10 @@ stopped it, lifting coverage from 9.5% to 12.0%.
 | Blockscout v2 `method=` filter | **silently broken — do not use.** Returns 0 items for `0x3e5aa082`, a selector directly observed on this address moments earlier, and 0 for the method *name* too. A naive use would have produced a confident, entirely fake "zero Class A". |
 | drpc archive `getLogs` | works, and produced §12.1, but throughput collapses under sustained use; a 700,000-block range ran >30 min without completing |
 
-**So the Class A denominator stands at 110,103 batches over 1,263,815 blocks — 12.0% of
-Nitro-era history.** Completing it needs an Etherscan API key (free tier: 5 calls/sec, 100k
-calls/day; the log census needs roughly 1,000 calls) or any endpoint that will serve sustained
-`module=logs` requests. `npm run census --api etherscan` is implemented and waiting on the key.
-The claim in §12.1 must not be restated as "across all history" until that is done.
+**The Class A denominator is now 1,332,631 batches over a contiguous 10,537,989 blocks — the
+complete Nitro era.** `npm run census -- --api etherscan` reproduces it; `analysis/mainnet.py`
+prints the contiguity check that licenses the phrase "across all of Nitro-era history", since
+disjointness alone would still permit an unexamined gap for an event to hide in.
 
 **Sharper still: zero kind-3 messages.** Of 2,646 `MessageDelivered` events, **not one was
 `L2_MSG` (kind 3)** — the delayed-inbox path a user takes to bypass the sequencer. The

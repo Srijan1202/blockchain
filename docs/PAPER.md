@@ -37,11 +37,11 @@ U = 625, p = 1.29 × 10⁻⁹, n = 25 per cell [E2]. **(ii) On a healthy chain, 
 hatch is structurally unreachable.** `forceInclusion` acts only on delayed messages the
 sequencer has not yet read, and a healthy sequencer reads them within minutes, hours before
 the 24-hour window opens [P, E2]. The mechanism cannot be rehearsed: a user's first invocation
-is necessarily under adversarial conditions. **(iii) In the history we could examine, it is never invoked.** We find no confirmed forced
-inclusion in 110,103 batches spanning 1,263,815 L1 blocks, an exact binomial 95% CI on the
-rate of [0, 3.35 × 10⁻⁵], and not one user-submitted escape-hatch message among 2,646
-delayed-inbox messages [M]. That window is **12.0% of Nitro-era history**; we report the bound
-it supports and do not extrapolate to "never". **(iv) Two structural properties of Arbitrum's
+is necessarily under adversarial conditions. **(iii) It has never been invoked.** Across the *complete* history of the mechanism —
+1,332,631 batches over a contiguous 10,537,989 L1 blocks, from the SequencerInbox's deployment
+to block 25,949,044 — there is **not one successful `forceInclusion` call**, an exact binomial
+95% CI on the rate of [0, 2.77 × 10⁻⁶]; nor one user-submitted escape-hatch message among the
+delayed-inbox messages we sampled [M]. **(iv) Two structural properties of Arbitrum's
 delay buffer, established from the deployed source and confirmed on our devnet:** buffer
 depletion is *retroactive*, so BoLD's protection cannot engage during a first censorship
 incident, only a sustained one; and forcing is a *batch* operation whose price is set by how
@@ -639,8 +639,7 @@ every row carries its evidence string, and no class is ever upgraded to improve 
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
-| Arbitrum One | SequencerInbox (RPC) | 24,949,045-25,949,044 (1,000,000) | 101,111 batches | **0** | — | — | — |
-| Arbitrum One | SequencerInbox (explorer) | 15,411,056-15,674,870 (263,815) | 8,992 batches | **0** | — | — | — |
+| Arbitrum One | SequencerInbox | **15,411,056-25,949,044 (10,537,989, contiguous)** | **1,332,631 batches** | **0** | — | — | — |
 | Arbitrum One | Bridge | 25,929,045-25,949,044 (20,000) | 2,646 messages | 0 | **0** | 2,626 | 9 |
 | OP Mainnet | OptimismPortal | 25,939,045-25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
 | Base | OptimismPortal | 25,939,045-25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
@@ -649,21 +648,32 @@ Ranges are disjoint per target, so the counts sum to a valid denominator [M].
 
 ### 10.2 Class A: zero, and the bound that supports
 
-**No confirmed forced inclusion in 110,103 batches spanning 1,263,815 L1 blocks**, across two
-disjoint windows at opposite ends of Nitro's history — the 2022 era immediately after the
-Nitro migration, and the most recent ~139 days. Exact Clopper-Pearson 95% CI on the rate:
-**[0, 3.35 x 10^-5]** [M].
+**`forceInclusion` has never been successfully called on Arbitrum One.** Zero confirmed forced
+inclusions in **1,332,631 batches** over a **contiguous 10,537,989 L1 blocks** — from block
+15,411,056, where the SequencerInbox proxy first has code, to block 25,949,044, with no
+unexamined gaps. Exact Clopper-Pearson 95% CI on the rate: **[0, 2.77 x 10^-6]** [M].
 
 The denominator is batches rather than blocks or time, because every `SequencerBatchDelivered`
 either was a forced inclusion or was not — which is what makes the interval binomial. Stated as
-a reader should quote it: *the escape hatch was not exercised once in the observed window, and
-the data remains consistent with a true rate as high as roughly one per 27,000 batches.* Zero
-observed is not zero possible.
+a reader should quote it: *in the entire operational lifetime of Arbitrum One's escape hatch,
+no user has ever successfully invoked it, and the data bounds the rate at no more than about
+one per 361,000 batches.* Zero observed is still not zero possible — a first use tomorrow
+would not contradict this — but the observation window is no longer the limitation.
 
-**Coverage is 1,000,000 of 10,537,989 Nitro-era blocks, or 9.5%**, and we do not extrapolate
-past it. The Nitro floor is block 15,411,056, where the SequencerInbox proxy first has code.
+**Coverage is complete rather than sampled**, which matters for a null result: a partial
+census leaves a reader wondering whether the events are simply elsewhere. `analysis/mainnet.py`
+prints an explicit contiguity check, because disjointness alone would still permit an
+unexamined gap for an event to hide in.
 
-Two facts make a wider census tractable, and both were verified rather than assumed. The proxy
+The entire batch population is accounted for, which is stronger than a filtered count. Across
+the 1,231,520 batches enumerated by the log census, `dataLocation` was TxInput 592,318, Blob
+639,201, SeparateBatchEvent 1, and **NoData 0** — and NoData is what `forceInclusion`
+produces. The Class A candidate set was empty *before* any of the four confirmation conditions
+were applied, so the zero is not an artifact of a strict classifier. The remaining 101,111
+batches come from independent RPC scans, which likewise found no NoData: two different data
+sources over different ranges, agreeing.
+
+Two facts make the census correct, and both were verified rather than assumed. The proxy
 address is **stable across all of Nitro history** — `bridge.sequencerInbox()` returns
 `0x1c4796...82B6` at all ten blocks sampled from 15,411,100 to 25,949,044 — whereas the
 *Rollup* address is not, `0x4DCeB4...Cfc0` having code only from block 21,830,860, so resolving
