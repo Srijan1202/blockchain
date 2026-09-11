@@ -71,7 +71,11 @@ def report_coverage(conn: sqlite3.Connection) -> dict[str, int]:
         print(f"  {'':<14} {'':<16} logs_seen={r['logs_seen']:,}  {status}  via {r['rpc_host']}")
         if r["notes"]:
             print(f"  {'':<14} {'':<16} note: {r['notes']}")
-        if r["target_label"] == "SequencerInbox":
+        # Any SequencerInbox scan contributes to the binomial denominator,
+        # whichever route produced it: "SequencerInbox" (RPC getLogs) and
+        # "SequencerInbox:logcensus" (explorer API) count the same population,
+        # and an exact-match test here silently dropped the census rows.
+        if r["target_label"].startswith("SequencerInbox"):
             denominators[r["chain_key"]] = denominators.get(r["chain_key"], 0) + r["logs_seen"]
         if not r["complete"]:
             print(f"  {'':<14} {'':<16} !! coverage has holes - counts are a LOWER BOUND")
@@ -81,7 +85,8 @@ def report_coverage(conn: sqlite3.Connection) -> dict[str, int]:
     # flatters the "never used" conclusion. Caught here rather than trusted.
     spans: dict[str, list[tuple[int, int, str]]] = {}
     for r in rows:
-        spans.setdefault(f"{r['chain_key']}/{r['target_label']}", []).append(
+        population = "SequencerInbox" if r["target_label"].startswith("SequencerInbox") else r["target_label"]
+        spans.setdefault(f"{r['chain_key']}/{population}", []).append(
             (r["from_block"], r["to_block"], r["rpc_host"])
         )
     overlaps = []
