@@ -218,6 +218,13 @@ export interface MainnetEventRow {
   chain_key: string;
   class: MainnetClass;
   tx_hash: string;
+  /**
+   * Position of the log within its block. Part of the uniqueness key: one
+   * transaction can emit several events of the same class, and keying without
+   * it silently collapsed them into one row (see migration 005). -1 means the
+   * row predates the column.
+   */
+  log_index: number;
   block_number: number;
   block_timestamp: number;
   evidence: string;
@@ -535,9 +542,9 @@ export function upsertCosts(db: DatabaseHandle, row: CostRow): void {
 export function insertMainnetEvent(db: DatabaseHandle, row: MainnetEventRow): void {
   db.prepare(
     `INSERT INTO mainnet_events
-       (event_id, chain_key, class, tx_hash, block_number, block_timestamp, evidence, value_wei)
+       (event_id, chain_key, class, tx_hash, log_index, block_number, block_timestamp, evidence, value_wei)
      VALUES
-       (@event_id, @chain_key, @class, @tx_hash, @block_number, @block_timestamp, @evidence, @value_wei)`,
+       (@event_id, @chain_key, @class, @tx_hash, @log_index, @block_number, @block_timestamp, @evidence, @value_wei)`,
   ).run({ value_wei: null, ...row });
 }
 

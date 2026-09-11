@@ -46,6 +46,8 @@ export const SBD_DATA_LENGTH = 450;
 
 export interface BatchLog {
   txHash: Hex;
+  /** Log position within its block; part of the event's identity (migration 005). */
+  logIndex: number;
   blockNumber: bigint;
   blockTimestamp: bigint;
   afterDelayedMessagesRead: bigint;
@@ -74,6 +76,7 @@ export function decodeBatchLog(r: Record<string, unknown>): BatchLog | null {
   const word = (i: number): string => data.slice(2 + i * 64, 2 + (i + 1) * 64);
   return {
     txHash: String(r.transactionHash ?? "") as Hex,
+    logIndex: Number(hexToBigInt(r.logIndex ?? "0x0")),
     blockNumber: hexToBigInt(r.blockNumber),
     blockTimestamp: hexToBigInt(r.timeStamp ?? "0x0"),
     afterDelayedMessagesRead: BigInt(`0x${word(1)}`),
@@ -263,7 +266,7 @@ export async function censusBatches(opts: {
     undecodable += page.raw.length - page.decoded.length;
     let fresh = 0;
     for (const d of page.decoded) {
-      const key = `${d.txHash}:${d.blockNumber}`;
+      const key = `${d.txHash}:${d.logIndex}`;
       if (seen.has(key)) continue;
       seen.add(key);
       fresh += 1;

@@ -179,11 +179,11 @@ chk("dataLocation NoData", "10.1", 0, loc.get("2",0))
 chk("RPC-scanned batches", "10.1", 101111, denom-census_n)
 chk("dataLocation sums to census n", "10.1", True, sum(loc.values())==census_n)
 ev = collections.Counter((r["chain_key"], r["class"]) for r in conn.execute("SELECT chain_key,class FROM mainnet_events"))
-chk("Arbitrum Bridge Class C", "10.3", 2626, ev[("arbitrum-one","C")])
+chk("Arbitrum Bridge Class C", "10.3", 2637, ev[("arbitrum-one","C")])
 chk("Arbitrum Bridge Class D", "10.3", 9, ev[("arbitrum-one","D")])
-chk("OP Mainnet deposits Class C (rows)", "10.3", 344, ev[("op-mainnet","C")])
-chk("Base deposits Class C (rows)", "10.3", 1067, ev[("base","C")])
-chk("OP+Base deposit rows", "10.6", 1411, ev[("op-mainnet","C")]+ev[("base","C")])
+chk("OP Mainnet deposits Class C (rows)", "10.3", 362, ev[("op-mainnet","C")])
+chk("Base deposits Class C (rows)", "10.3", 1095, ev[("base","C")])
+chk("OP+Base deposit rows", "10.6", 1457, ev[("op-mainnet","C")]+ev[("base","C")])
 br = [s for s in scans if s["target_label"]=="Bridge"][0]
 chk("Bridge messages examined", "10.3", 2646, br["logs_seen"])
 dl = [r["delay_blocks"] for r in conn.execute("SELECT delay_blocks FROM mainnet_events WHERE class='C' AND delay_blocks IS NOT NULL")]
@@ -192,7 +192,7 @@ kinds = collections.Counter()
 for r in conn.execute("SELECT evidence FROM mainnet_events WHERE chain_key='arbitrum-one'"):
     m = re.search(r"kind=(\d+)", r["evidence"])
     if m: kinds[int(m.group(1))] += 1
-for k, exp in [(13,2070),(9,520),(12,45),(3,0)]:
+for k, exp in [(13,2070),(9,531),(12,45),(3,0)]:
     chk(f"Arbitrum kind {k} count", "10.5", exp, kinds.get(k,0))
 
 print(f"{'claim':<46} {'sec':<6} {'draft':<26} {'re-derived':<26} ok")

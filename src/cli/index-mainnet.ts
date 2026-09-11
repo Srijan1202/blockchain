@@ -128,6 +128,7 @@ interface OutRow {
   chain_key: string;
   class: MainnetClass;
   tx_hash: string;
+  log_index: number;
   block_number: number;
   block_timestamp: number;
   evidence: string;
@@ -150,6 +151,7 @@ function writeRow(db: DatabaseHandle, r: OutRow): void {
       chain_key: r.chain_key,
       class: r.class,
       tx_hash: r.tx_hash,
+      log_index: r.log_index,
       block_number: r.block_number,
       block_timestamp: r.block_timestamp,
       evidence: r.evidence,
@@ -163,16 +165,17 @@ function writeRow(db: DatabaseHandle, r: OutRow): void {
         SET scan_id = @scan_id, batch_size = @batch_size, swept_own = @swept_own,
             swept_other = @swept_other, swept_unknown = @swept_unknown,
             actor = @actor, delay_blocks = @delay_blocks
-      WHERE chain_key = @chain_key AND tx_hash = @tx_hash AND class = @class`,
+      WHERE chain_key = @chain_key AND tx_hash = @tx_hash AND log_index = @log_index AND class = @class`,
   ).run({
     scan_id: r.scan_id, batch_size: r.batch_size, swept_own: r.swept_own,
     swept_other: r.swept_other, swept_unknown: r.swept_unknown, actor: r.actor,
-    delay_blocks: r.delay_blocks, chain_key: r.chain_key, tx_hash: r.tx_hash, class: r.class,
+    delay_blocks: r.delay_blocks, chain_key: r.chain_key, tx_hash: r.tx_hash,
+    log_index: r.log_index, class: r.class,
   });
 }
 
 const CSV_COLUMNS = [
-  "chain_key", "class", "tx_hash", "block_number", "block_timestamp",
+  "chain_key", "class", "tx_hash", "log_index", "block_number", "block_timestamp",
   "batch_size", "swept_own", "swept_other", "swept_unknown", "actor",
   "delay_blocks", "scan_id", "scan_from_block", "scan_to_block", "evidence",
 ] as const;
@@ -250,7 +253,7 @@ async function main(): Promise<void> {
         for (let i = f.sweptFrom; i < f.sweptTo; i++) forcedIndices.add(i.toString());
       }
       rows.push({
-        chain_key: chain.key, class: f.classified.class, tx_hash: f.txHash,
+        chain_key: chain.key, class: f.classified.class, tx_hash: f.txHash, log_index: f.logIndex,
         block_number: Number(f.blockNumber), block_timestamp: Number(f.blockTimestamp),
         evidence: f.classified.evidence, scan_id: sbdScan,
         batch_size: f.batchSize === null ? null : Number(f.batchSize),
@@ -273,12 +276,19 @@ async function main(): Promise<void> {
       thresholdBlocks: threshold, forcedIndices, onlyL2Msg: !args.allKinds,
       throttleMs: args.throttleMs, logger: log,
     });
-    finishScan(db, mdScan, msgs.logsSeen, msgs.gaps.length === 0,
-      msgs.gaps.length ? `${msgs.gaps.length} coverage gap(s)` : (args.allKinds ? "" : "filtered to kind 3 (L2_MSG)"));
+    // A scan is only "complete" if every examined event became a row. A
+    // deficit means events were seen and lost, which must never be inferable
+    // only by subtracting two numbers in a paper.
+    finishScan(db, mdScan, msgs.logsSeen, msgs.gaps.length === 0 && msgs.dropped === 0,
+      [
+        msgs.gaps.length ? `${msgs.gaps.length} coverage gap(s)` : "",
+        msgs.dropped ? `DROPPED ${msgs.dropped} examined events (not stored)` : "",
+        args.allKinds ? "" : "filtered to kind 3 (L2_MSG)",
+      ].filter(Boolean).join("; "));
 
     for (const m of msgs.records) {
       rows.push({
-        chain_key: chain.key, class: m.classified.class, tx_hash: m.txHash,
+        chain_key: chain.key, class: m.classified.class, tx_hash: m.txHash, log_index: m.logIndex,
         block_number: Number(m.blockNumber), block_timestamp: Number(m.blockTimestamp),
         evidence: m.classified.evidence, scan_id: mdScan,
         batch_size: null, swept_own: null, swept_other: null, swept_unknown: null,
@@ -295,11 +305,15 @@ async function main(): Promise<void> {
     scans.push({ id: scanId, from, to });
 
     const deps = await scanOpDeposits({ client, portal, standardBridge: null, range, chunk: args.chunk, throttleMs: args.throttleMs, logger: log });
-    finishScan(db, scanId, deps.logsSeen, deps.gaps.length === 0, deps.gaps.length ? `${deps.gaps.length} coverage gap(s)` : "");
+    finishScan(db, scanId, deps.logsSeen, deps.gaps.length === 0 && deps.dropped === 0,
+      [
+        deps.gaps.length ? `${deps.gaps.length} coverage gap(s)` : "",
+        deps.dropped ? `DROPPED ${deps.dropped} examined events (not stored)` : "",
+      ].filter(Boolean).join("; "));
 
     for (const d of deps.records) {
       rows.push({
-        chain_key: chain.key, class: d.classified.class, tx_hash: d.txHash,
+        chain_key: chain.key, class: d.classified.class, tx_hash: d.txHash, log_index: d.logIndex,
         block_number: Number(d.blockNumber), block_timestamp: Number(d.blockTimestamp),
         evidence: d.classified.evidence, scan_id: scanId,
         batch_size: null, swept_own: null, swept_other: null, swept_unknown: null,
