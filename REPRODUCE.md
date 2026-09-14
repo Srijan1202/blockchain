@@ -253,9 +253,13 @@ serves wide `eth_getLogs`; see `README.md` for which free endpoints do.
 ## 9. What cannot be reproduced, and why
 
 **E2 — the 100 testnet runs — cannot be recollected.** They were collected on Ethereum Sepolia
-and its rollups (Arbitrum Sepolia, OP Sepolia). Sepolia's announced end of life is
-**30 September 2026**; after that date those networks are not maintained, and their state and
-the L1 they settle to are not available to transact against. `npm run run` remains in the
+and its rollups (Arbitrum Sepolia, OP Sepolia). The Ethereum Foundation's expected end of life
+for Sepolia is **30 September 2026** — stated verbatim as "Expected end of life 30th September,
+2026" in [*Holesky and Hoodi Testnet Updates*](https://blog.ethereum.org/2025/03/18/hoodi-holesky)
+(EF blog, 18 March 2025), which also gives an expected launch of March 2026 for its replacement.
+That page was read directly on 2026-09-15 to confirm the date; the EF's own wording is
+"expected", and this document uses it. After that date the network is not maintained, and its
+state and the L1 the rollups settle to are not available to transact against. `npm run run` remains in the
 repository as the record of how the data was collected, and the harness re-reads every
 protocol parameter live rather than from a constant, so it would run against a successor
 testnet — but the numbers it produced would be from a different chain at a different time and
