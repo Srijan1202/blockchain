@@ -196,4 +196,5 @@ All `uint256` values are stored as `TEXT` (see warning 2). Block numbers are `IN
   paper from the run's recorded state, not from this database. n = 1.
 - **Any mainnet Class A event.** Because there are none.
 - **API keys or full RPC URLs.** Only hosts are stored, anywhere.
-- **Any transaction after Sepolia's end of life.** E2 cannot be recollected; see `REPRODUCE.md`.
+- **Any transaction after Sepolia's expected end of life, 30 September 2026** (EF blog, *Holesky and
+  Hoodi Testnet Updates*, 18 March 2025). E2 cannot be recollected; see `REPRODUCE.md` §9.
