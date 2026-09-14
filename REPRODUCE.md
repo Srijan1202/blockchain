@@ -40,13 +40,18 @@ The analysis has two tiers:
 ```bash
 git clone https://github.com/Srijan1202/blockchain.git l2-escape-bench
 cd l2-escape-bench
-npm ci
+npm ci --ignore-scripts
 npm run typecheck        # must print nothing but the tsc invocation
 ```
 
-`npm ci` installs from `package-lock.json` exactly. `better-sqlite3` compiles a native module;
-on Windows this needs the Visual Studio Build Tools, on Linux `build-essential` and
-`python3`. If `npm ci` fails there, that is the cause.
+**`--ignore-scripts` is required, not optional.** `better-sqlite3` ships prebuilt N-API
+binaries for every common platform inside its package and needs no compiler — but it also
+carries a `binding.gyp`, and on seeing one npm attempts a native build regardless. On a
+machine without a C++ toolchain (no Visual Studio Build Tools on Windows, no
+`build-essential` on Linux) that build fails and `npm ci` aborts, even though the prebuilt
+binary it would have used is already on disk. Verified on a fresh clone: plain `npm ci` fails
+on Node 26; `npm ci --ignore-scripts` succeeds and the module loads from the bundled prebuild.
+None of this project's other dependencies has an install script, so nothing is lost.
 
 Python, in a virtual environment so the pinned packages do not collide with anything else:
 
@@ -70,7 +75,9 @@ cp dataset/bench.sqlite dataset/export.csv dataset/export_manifest.json data/
 ```
 
 `sha256sum -c` must print `OK` for all three files. If it does not, the files were altered in
-transit and nothing below is meaningful.
+transit and nothing below is meaningful. (A `.gitattributes` in the repository forces LF line
+endings on `dataset/` so this check passes on Windows checkouts with `core.autocrlf=true`; the
+first version of this document did not have it and the check failed on every such machine.)
 
 Read `dataset/DATA_DICTIONARY.md` before touching the CSV. Three things in it will produce a
 wrong number if skipped, and the first — that wei columns overflow float64 — is silent.
@@ -276,20 +283,33 @@ paper, but not recollect the observations behind them.
 
 ## 10. Verification log
 
-Followed on a fresh clone, 2026-09-15, Windows 11, in a directory with no prior state:
+Followed on a fresh clone from the remote, 2026-09-15, Windows 11, Node v26.3.1,
+Python 3.13.14, in a directory with no prior state. Two steps failed on the first attempt.
+Both were fixed in the repository or in this document, never by hand in the clone, and the
+clone was discarded and re-created from the remote before re-testing.
 
-| Step | Result |
-|---|---|
-| `npm ci` + `npm run typecheck` | clean |
-| `python -m venv` + `pip install -r analysis/requirements.txt` | pandas 3.0.5, numpy 2.5.3, matplotlib 3.11.2 |
-| `sha256sum -c SHA256SUMS` | 3 × OK |
-| `npm run export` | 100 rows × 108 columns; CSV byte-identical to shipped |
-| `nonparametric.py` | ALL PASS |
-| `clockcheck.py` | 0 violations / 200 pairs |
-| `drift.py` | 3 DISPERSION flags, all arb-sepolia/forced; no DRIFT/REGIME |
-| `report.py`, `stability.py`, `figures.py` | ran; 6 figures written |
-| `mainnet.py` | CONTIGUOUS 15411056..25951325; 0 Class A in 1,332,810; CI [0, 2.768e-06] |
-| `reconcile.py` | 91 claims, 0 mismatches |
+| Step | First attempt | Fix | Re-test |
+|---|---|---|---|
+| §2 `npm ci` | **FAILED** — `node-gyp rebuild` for `better-sqlite3`, no Visual Studio found | Document `npm ci --ignore-scripts`; the package's bundled prebuild loads without compiling | OK; `better-sqlite3` loads, sqlite 3.53.4 |
+| §2 `npm run typecheck` | not reached | — | clean |
+| §2 Python venv + `requirements.txt` | OK | — | pandas 3.0.5, numpy 2.5.3, matplotlib 3.11.2 |
+| §2 `nonparametric.py` | OK | — | ALL PASS |
+| §3 `sha256sum -c SHA256SUMS` | **FAILED** — all three files: `core.autocrlf=true` rewrote every `dataset/` text file to CRLF on checkout, so `SHA256SUMS` carried a trailing CR on each filename and `export.csv` was 101 bytes larger | Added `.gitattributes` forcing `eol=lf` on `dataset/**` and `binary` on the sqlite | 3 × OK; `export.csv` LF, 75,271 bytes |
+| §5 migrations present | OK | — | 001–005 |
+| §5 `npm run export` | OK | — | 100 × 108; CSV hash matches `SHA256SUMS` |
+| §6.2 `clockcheck.py` | OK | — | 0 violations / 200 pairs |
+| §6.2 `drift.py` | OK | — | 3 DISPERSION flags, all arb-sepolia/forced; no DRIFT/REGIME |
+| §6.3 `report.py` | OK | — | M_L2 medians 766 / 76; U = 625 |
+| §6.3 `stability.py` | OK | — | GUARDED + 3 × ILL-POSED |
+| §6.4 `figures.py` | OK | — | 6 figures written |
+| §6.5 `mainnet.py` | OK | — | CONTIGUOUS 15411056..25951325; 0 in 1,332,810; CI [0, 2.768e-06] |
+| §7 `reconcile.py` | OK | — | 91 claims, 0 mismatches |
+| §8 `npm run census --dry-run` | OK (with a key) | — | positive control PASSED, 255 logs, all decoded |
 
-Anything that failed on the first attempt, and what was changed in this document as a result,
-is listed in the commit that added this file.
+The `bench.sqlite` in the clone passed `PRAGMA integrity_check` before and after the
+line-ending fix; git had correctly detected it as binary throughout, so the database was never
+at risk — only the text files and the digest check were.
+
+Both first-attempt failures are the kind this document exists to find: each would have
+stopped a reader at step two or three with an error that looks like their environment's fault,
+and neither is visible from the machine the project was developed on.
