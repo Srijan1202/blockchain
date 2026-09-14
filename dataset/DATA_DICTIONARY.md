@@ -9,7 +9,17 @@ Layer-2 Rollups*. Three files, one source of truth:
 | `export.csv` | One row per E2 run, 100 rows × 108 columns, produced by `npm run export`. **Every analysis and figure regenerates from this file alone.** |
 | `export_manifest.json` | Provenance for `export.csv`: git commit, chain IDs, contract addresses used, block ranges observed, RPC hosts (host only, never a key), and the analysis decisions the columns encode. |
 
-`SHA256SUMS` lists the digests of all three at release. Verify with `sha256sum -c SHA256SUMS`.
+Plus the full-history read-delay census (paper §10.1), which decides what the Class A zero
+means:
+
+| File | What it is |
+|---|---|
+| `read_delay_messages.csv.gz` | Every `MessageDelivered` on Arbitrum One in Nitro-era history: `index,block,kind`. 2,563,796 rows, index-contiguous from 0. |
+| `read_delay_batches.csv.gz` | Every `SequencerBatchDelivered`: `block,seq,afterDelayedMessagesRead,dataLocation`. 1,335,349 rows, sequence-contiguous from 0. `seq` is the event's unique identity. The working copy the tool writes also carries `txHash,logIndex`; they are dropped here to keep the release under 15 MB and are regenerable with `npm run census-read-delay -- --only batches`. |
+| `read_delay_params.csv` | `delayBlocks` and the other `maxTimeVariation` fields sampled at every implementation boundary and on a 250,000-block grid — it was 5,760 until the BoLD upgrade and 7,200 after, and every comparison uses the value in force at the time. |
+| `e1-run.json` | The single devnet censorship run's recorded state (n = 1), from which the paper's M-L5 and E1 cost figures are derived. |
+
+`SHA256SUMS` lists the digests of everything at release. Verify with `sha256sum -c SHA256SUMS`.
 
 Read the three warnings first. Each describes a way to get a wrong number from correct data.
 
@@ -194,7 +204,8 @@ All `uint256` values are stored as `TEXT` (see warning 2). Block numbers are `IN
 
 - **E1 (devnet) runs.** The single censorship run and its M-L5 measurement are reported in the
   paper from the run's recorded state, not from this database. n = 1.
-- **Any mainnet Class A event.** Because there are none.
+- **Any mainnet Class A event.** Because there are none — and the read-delay census shows
+  there could not have been: no delayed message has ever gone unread past `delayBlocks`.
 - **API keys or full RPC URLs.** Only hosts are stored, anywhere.
 - **Any transaction after Sepolia's expected end of life, 30 September 2026** (EF blog, *Holesky and
   Hoodi Testnet Updates*, 18 March 2025). E2 cannot be recollected; see `REPRODUCE.md` §9.

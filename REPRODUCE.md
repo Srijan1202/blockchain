@@ -178,7 +178,9 @@ python analysis/figures.py --csv data/export.csv --out analysis/figures
 Writes `ecdf_M_L1.png` … `ecdf_M_L4.png`, `cost_comparison.png`, `cost_decomposition.png`.
 Captions embed the mixed-clock flag and resolution automatically.
 
-### 6.5 The mainnet result (reads `bench.sqlite`)
+### 6.5 The mainnet results
+
+Two census products. The first reads `bench.sqlite`:
 
 ```bash
 python analysis/mainnet.py --db data/bench.sqlite
@@ -191,6 +193,20 @@ arbitrum-one   0 Class A in 1,332,810 batches
 ```
 The `CONTIGUOUS` line is what licenses "across all of Nitro-era history". If it reports
 `OVERLAPPING` or `UNEXAMINED`, the denominator cannot be quoted.
+
+The second is the full-history read-delay census — the one that decides what the Class A zero
+means (paper §10.1). It reads three files shipped in `dataset/` (`read_delay_params.csv`,
+`read_delay_messages.csv.gz`, `read_delay_batches.csv.gz`) and falls back to them
+automatically when `data/` has no working copy:
+
+```bash
+python analysis/read_delay.py
+```
+Expected: `index space CONTIGUOUS`; `batch seq space ... CONTIGUOUS`; read-delay max
+**1,250** blocks; `messages that exceeded delayBlocks (force-eligible): 0 of 2,563,777`;
+closest approach **0.174**; `VERDICT: forceInclusion was NEVER REACHABLE`. Takes about two
+minutes and ~1.5 GB of memory. The two `CONTIGUOUS` lines are the completeness checks — a gap
+in either stream means the walk missed events and the verdict cannot be quoted.
 
 ---
 
@@ -233,6 +249,18 @@ npm run census -- --api etherscan --from 15411056 --offset 1000 --throttle-ms 22
 Block 15,411,056 is where the SequencerInbox proxy first has code (verified by bisection);
 `--to` defaults to the current head. The run takes roughly ten minutes. If your connection
 drops, the tool records the range it actually reached; resume with `--from <that block + 1>`.
+
+To regenerate the read-delay streams themselves (~4,000 calls, ~90 minutes at Etherscan's
+3 calls/sec; resumable):
+
+```bash
+npm run census-read-delay -- --only params      # delayBlocks history via archive eth_call (needs RPC_ETH_MAINNET)
+npm run census-read-delay -- --only batches     # every SequencerBatchDelivered, windowed, with sequence numbers
+npm run census-read-delay -- --only messages    # every MessageDelivered
+```
+Run the streams one at a time — two in parallel exceed the 3 calls/sec limit and both stall.
+Each is resumable from its CSV; a truncated final line from an abrupt kill is detected and
+dropped on resume.
 
 **Then** `python analysis/mainnet.py` again. The batch count will be *larger* than 1,332,810
 because the chain has advanced; Class A should still be 0, and the `CONTIGUOUS` line should
@@ -307,7 +335,7 @@ clone was discarded and re-created from the remote before re-testing.
 | §6.3 `stability.py` | OK | — | GUARDED + 3 × ILL-POSED |
 | §6.4 `figures.py` | OK | — | 6 figures written |
 | §6.5 `mainnet.py` | OK | — | CONTIGUOUS 15411056..25951325; 0 in 1,332,810; CI [0, 2.768e-06] |
-| §7 `reconcile.py` | OK | — | 91 claims, 0 mismatches |
+| §7 `reconcile.py` | OK | — | 91 claims, 0 mismatches (123 after the read-delay census was added) |
 | §8 `npm run census --dry-run` | OK (with a key) | — | positive control PASSED, 255 logs, all decoded |
 
 The `bench.sqlite` in the clone passed `PRAGMA integrity_check` before and after the

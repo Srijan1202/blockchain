@@ -16,7 +16,8 @@
     "export": "tsx src/cli/export.ts",
     "resume": "tsx src/cli/resume.ts",
     "index-mainnet": "tsx src/cli/index-mainnet.ts",
-    "census": "tsx src/cli/census-forced.ts"
+    "census": "tsx src/cli/census-forced.ts",
+    "census-read-delay": "tsx src/cli/census-read-delay.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

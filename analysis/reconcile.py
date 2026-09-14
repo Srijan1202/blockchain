@@ -195,6 +195,77 @@ for r in conn.execute("SELECT evidence FROM mainnet_events WHERE chain_key='arbi
 for k, exp in [(13,2070),(9,531),(12,45),(3,0)]:
     chk(f"Arbitrum kind {k} count", "10.5", exp, kinds.get(k,0))
 
+# ---- E1: recorded run state (n=1), so the clock-lag figure cannot drift again ----
+# The E1 run is not in bench.sqlite; its state file is the record. The lag quoted
+# in 9.7 and 12.3 was once written as "~113 s", which was 93 + 20 - the L1 window
+# added to the lag, i.e. not a quantity. The recorded lag is force-block timestamp
+# minus the forced L2 block's timestamp.
+import os
+_e1 = os.environ.get("E1_STATE", "dataset/e1-run.json")
+if os.path.exists(_e1):
+    e1 = json.load(open(_e1))
+    f_ts, l2_ts, on_ts = int(e1["forceTimestamp"]), int(e1["l2Timestamp"]), int(e1["submitL1Timestamp"])
+    chk("E1 L2 clock lag (force ts - L2 block ts)", "9.7/12.3", 20, f_ts - l2_ts)
+    chk("E1 naive mixed-clock M-L5", "9.7", 73, l2_ts - on_ts)
+    chk("E1 single-clock M-L5 (s)", "9.6", 93, f_ts - on_ts)
+    chk("E1 M-L5 in L1 blocks", "9.6", 92, int(e1["forceBlock"]) - int(e1["submitL1Block"]))
+    chk("E1 lag is BELOW the 70 s E2 margin", "12.3", True, (f_ts - l2_ts) < 70)
+else:
+    chk("E1 state file present", "9.6", True, False)
+
+# ---- 10.1 / 10.4 / 10.5: full-history read-delay census ----
+# Reuses read_delay.py's loaders so the paper's numbers and the analysis script
+# cannot compute the same quantity two different ways.
+import read_delay as rd
+_knots = rd.load_params("data/read_delay_params.csv")
+_batches = rd.load_batches("data/read_delay_batches.csv")
+_msgs = rd.load_messages("data/read_delay_messages.csv")
+_idx, _blk, _kind = _msgs
+_delays, _unread = rd.sweep(_msgs, _batches)
+_read = [(_delays[k], k) for k in range(len(_idx)) if _delays[k] >= 0]
+_vals = sorted(d for d, _ in _read)
+chk("delayed messages in history", "10.1", 2563796, len(_idx))
+chk("message index space contiguous", "10.1", True, _idx[-1] - _idx[0] + 1 == len(_idx))
+_bs = set(int(r["seq"]) for r in csv.DictReader(rd.open_csv("data/read_delay_batches.csv")))
+chk("batch seq space contiguous", "10.1", True, max(_bs) - min(_bs) + 1 == len(_bs))
+chk("batches in history (seq count)", "10.1", 1335349, len(_bs))
+chk("messages with a read delay", "10.1", 2563796, len(_read))
+chk("unread at end of range", "10.1", 0, _unread)
+chk("delayBlocks pre-BoLD", "10.1", 5760, rd.delay_blocks_at(_knots, 21_830_859))
+chk("delayBlocks post-BoLD", "10.1", 7200, rd.delay_blocks_at(_knots, 21_830_860))
+for q, exp in ((0.5, 61), (0.9, 93), (0.99, 113), (0.999, 410), (0.9999, 817)):
+    chk(f"read delay p{q*100:g}", "10.1", exp, rd.pct(_vals, q))
+chk("read delay max (blocks)", "10.1", 1250, _vals[-1])
+_over = 0; _fmax = 0.0; _kmax = -1; _pre = _post = _pre_n = _post_n = 0
+for d, k in _read:
+    db = rd.delay_blocks_at(_knots, _blk[k])
+    if db == 5760: _pre_n += 1
+    else: _post_n += 1
+    f = d / db
+    if f >= 1.0:
+        _over += 1
+        if db == 5760: _pre += 1
+        else: _post += 1
+    if f > _fmax: _fmax, _kmax = f, k
+chk("messages ever force-eligible", "10.1", 0, _over)
+chk("eligible under delayBlocks=5760", "10.1", f"0 of 1870291", f"{_pre} of {_pre_n}")
+chk("eligible under delayBlocks=7200", "10.1", f"0 of 693505", f"{_post} of {_post_n}")
+chk("closest approach (fraction of window)", "10.1", 0.174, round(_fmax, 3))
+chk("closest-approach message index", "10.1", 2270298, _idx[_kmax])
+chk("closest-approach delivered block", "10.1", 24179652, _blk[_kmax])
+_b = sum(1 for d, k in _read if d > 150)
+chk("Class B over full history (>150 blocks)", "10.4", 8548, _b)
+_k3 = [d for d, k in _read if _kind[k] == 3]
+chk("kind-3 L2_MSG messages in history", "10.5", 357, len(_k3))
+chk("kind-3 read delay median", "10.5", 67, sorted(_k3)[len(_k3) // 2])
+chk("kind-3 read delay max", "10.5", 122, max(_k3))
+chk("kind-3 max fraction of window", "10.5", 0.021, round(max(d / rd.delay_blocks_at(_knots, _blk[k]) for d, k in _read if _kind[k] == 3), 3))
+_kc = collections.Counter(_kind[k] for _, k in _read)
+chk("kind 13 in history", "10.5", 1335321, _kc[13])
+chk("kind 12 in history", "10.5", 745207, _kc[12])
+chk("kind 9 in history", "10.5", 482898, _kc[9])
+chk("Class C (read-delay census)", "10.3", 2555248, len(_read) - _b)
+
 print(f"{'claim':<46} {'sec':<6} {'draft':<26} {'re-derived':<26} ok")
 print("-"*118)
 bad=0
