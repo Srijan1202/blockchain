@@ -1,0 +1,16 @@
+# The released dataset must check out byte-identical on every platform, or the
+# digests in dataset/SHA256SUMS fail and the CSV silently changes size. On a
+# Windows machine with core.autocrlf=true every text file here was being
+# rewritten to CRLF on checkout, which made `sha256sum -c` unable to parse its
+# own file list and added one byte per line to export.csv. Verified on a fresh
+# clone 2026-09-15; fixed here rather than in a note asking readers to set git
+# config, which they would not do.
+dataset/**          text eol=lf
+dataset/*.sqlite    binary
+
+# Source and docs: normalise to LF in the repository so diffs are not noise.
+*.ts   text eol=lf
+*.py   text eol=lf
+*.sql  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
