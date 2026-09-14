@@ -1,0 +1,295 @@
+# Reproducing the results
+
+This document was verified by following it literally on a fresh clone. Where it says a
+command produces a specific number, that number was obtained that way.
+
+There are two kinds of reproduction here and it matters which one you want:
+
+- **Every analysis, statistic and figure in the paper regenerates from the shipped dataset.**
+  This takes about ten minutes and needs no chain access, no API key, and no funds. Start at
+  §3 and stop at §7.
+- **The dataset itself cannot be recollected.** §9 says why, plainly. Do not read the rest of
+  this document as a promise that it can.
+
+---
+
+## 1. Prerequisites
+
+| Tool | Version verified | Notes |
+|---|---|---|
+| Node.js | v26.3.1 | `package.json` requires ≥ 20 |
+| npm | 11.16.0 | ships with Node |
+| Python | 3.13.14 | 3.11+ should work; nothing below is version-specific |
+| git | any | |
+| sqlite3 CLI | optional | Python's `sqlite3` module is used instead |
+
+The analysis has two tiers:
+
+- **Stdlib-only scripts** — `nonparametric.py`, `clockcheck.py`, `drift.py`, `mainnet.py`,
+  `reconcile.py`. These run on a bare Python install. Every exact estimator the paper quotes
+  (Clopper–Pearson, Mann–Whitney, Spearman, runs, Brown–Forsythe) lives in `nonparametric.py`
+  and is self-tested there.
+- **pandas/matplotlib scripts** — `report.py`, `stability.py`, `figures.py`. These need the
+  packages in `analysis/requirements.txt`. `scipy` is deliberately **not** required (see
+  `analysis/README.md`).
+
+---
+
+## 2. Clone and install
+
+```bash
+git clone https://github.com/Srijan1202/blockchain.git l2-escape-bench
+cd l2-escape-bench
+npm ci
+npm run typecheck        # must print nothing but the tsc invocation
+```
+
+`npm ci` installs from `package-lock.json` exactly. `better-sqlite3` compiles a native module;
+on Windows this needs the Visual Studio Build Tools, on Linux `build-essential` and
+`python3`. If `npm ci` fails there, that is the cause.
+
+Python, in a virtual environment so the pinned packages do not collide with anything else:
+
+```bash
+python -m venv .venv
+# Windows:  .venv\Scripts\activate      POSIX:  source .venv/bin/activate
+pip install -r analysis/requirements.txt
+python analysis/nonparametric.py       # self-test: must end with "=== ALL PASS ==="
+```
+
+---
+
+## 3. Install the dataset
+
+The working data directory `data/` is gitignored. The released dataset ships in `dataset/`.
+Copy it in and verify the digests:
+
+```bash
+cd dataset && sha256sum -c SHA256SUMS && cd ..
+cp dataset/bench.sqlite dataset/export.csv dataset/export_manifest.json data/
+```
+
+`sha256sum -c` must print `OK` for all three files. If it does not, the files were altered in
+transit and nothing below is meaningful.
+
+Read `dataset/DATA_DICTIONARY.md` before touching the CSV. Three things in it will produce a
+wrong number if skipped, and the first — that wei columns overflow float64 — is silent.
+
+---
+
+## 4. Environment variables
+
+Copy the template and fill in only what the commands you intend to run need:
+
+```bash
+cp .env.example .env
+```
+
+| Command | Needs | Purpose |
+|---|---|---|
+| `npm run typecheck` | nothing | |
+| `npm run export` | `DB_PATH` (optional; default `./data/bench.sqlite`) | RPC vars are recorded as hosts if set, `(unset)` otherwise; not required |
+| `python analysis/*.py` | nothing | reads `data/export.csv` and `data/bench.sqlite` |
+| `npm run index-mainnet` | `RPC_ETH_MAINNET` | read-only; needs archive `eth_getLogs` — see §8 |
+| `npm run census` | `RPC_ETH_MAINNET`, `ETHERSCAN_API_KEY` | read-only; see §8 |
+| `npm run verify` | `RPC_ETH_SEPOLIA`, `RPC_ARB_SEPOLIA`, `RPC_OP_SEPOLIA`, `RPC_BASE_SEPOLIA` | testnet connectivity; not needed for reproduction |
+| `npm run run` | all of the above plus `PRIVATE_KEY` | **collects new data — see §9, this cannot be meaningfully run** |
+
+No command in §5–§7 needs any variable set. `.env` may be left as the template.
+
+---
+
+## 5. Migrations and the export
+
+Migrations run automatically whenever a command opens the database for writing; there is no
+separate migrate step. The shipped `bench.sqlite` is already at migration 005. To confirm:
+
+```bash
+python -c "import sqlite3; print([r[0] for r in sqlite3.connect('data/bench.sqlite').execute('SELECT name FROM schema_migrations ORDER BY name')])"
+```
+
+Expected: `['001_init.sql', '002_lifecycle_revisions.sql', '003_l1_data_fee.sql', '004_mainnet_index.sql', '005_mainnet_event_log_index.sql']`.
+
+Regenerate the export from the database:
+
+```bash
+npm run export -- --out data/export.csv --manifest data/export_manifest.json
+```
+
+Expected in the log line: `"rows":100,"columns":108`. The regenerated `export.csv` is
+**byte-identical** to the shipped one — verify with `sha256sum data/export.csv` against
+`dataset/SHA256SUMS`. The manifest will differ only in `export_timestamp`, `git_commit`, and
+`rpc_hosts` (which reflect your environment, not the data).
+
+---
+
+## 6. Every statistic and figure, from `export.csv` alone
+
+Run in this order. Each command's key output is given so you can check it.
+
+### 6.1 Self-test the estimators
+
+```bash
+python analysis/nonparametric.py
+```
+Must end `=== ALL PASS ===`.
+
+### 6.2 Validity checks — run these before trusting any latency
+
+```bash
+python analysis/clockcheck.py --csv data/export.csv
+```
+Expected: `PASSED: 0 violations across 200 compared pairs`; every cell `adjacent_shared=0`.
+
+```bash
+python analysis/drift.py --csv data/export.csv
+```
+Expected: no `<-DRIFT` or `<-REGIME` marks; three `<-DISPERSION` marks, all in
+`arb-sepolia/forced` (M_L1 p=0.0188, M_L2 p=0.0445, M_L3 p=0.0497). Spearman and
+Brown–Forsythe p-values are seeded permutation tests, so they reproduce exactly.
+
+### 6.3 The report (needs pandas)
+
+```bash
+python analysis/report.py --csv data/export.csv
+```
+Key figures to check against the paper: M_L2 medians **766 s** (arb-sepolia/forced) and
+**76 s** (op-sepolia/forced); cross-protocol Mann–Whitney **U = 625, p = 1.29e-09**; every
+cell `success 25/25`.
+
+```bash
+python analysis/stability.py --csv data/export.csv
+```
+Expected verdicts: `arb-sepolia/forced` GUARDED; the other three cells ILL-POSED (the ±10%
+target is finer than the clock). This is the finding in paper §12.4, not a failure.
+
+### 6.4 Figures (needs matplotlib)
+
+```bash
+python analysis/figures.py --csv data/export.csv --out analysis/figures
+```
+Writes `ecdf_M_L1.png` … `ecdf_M_L4.png`, `cost_comparison.png`, `cost_decomposition.png`.
+Captions embed the mixed-clock flag and resolution automatically.
+
+### 6.5 The mainnet result (reads `bench.sqlite`)
+
+```bash
+python analysis/mainnet.py --db data/bench.sqlite
+```
+Expected:
+```
+arbitrum-one/SequencerInbox: CONTIGUOUS 15411056..25951325 (10,540,270 blocks, no unexamined gaps)
+arbitrum-one   0 Class A in 1,332,810 batches
+               rate 0.000e+00   95% CI [0.000e+00, 2.768e-06]
+```
+The `CONTIGUOUS` line is what licenses "across all of Nitro-era history". If it reports
+`OVERLAPPING` or `UNEXAMINED`, the denominator cannot be quoted.
+
+---
+
+## 7. Reconcile the paper against the data
+
+```bash
+python analysis/reconcile.py
+```
+
+Re-derives all 91 quantitative claims in paper sections 1–12 from `export.csv`, `bench.sqlite`
+and the estimators, and prints `claim / section / draft / re-derived / YES|NO` for each.
+Expected last line: **`91 claims checked, 0 mismatches`**.
+
+A mismatch means the draft and the data disagree. It does not say which is right — one
+mismatch in this project's history was a real schema artifact worth documenting rather than a
+typo — so read the row before deciding.
+
+---
+
+## 8. Re-running the mainnet census (optional; needs network)
+
+The census is read-only, signs nothing, and loads no key beyond the explorer's. It is the one
+data-collection step that *can* be repeated, because mainnet history does not expire.
+
+**Prerequisites.** A free Etherscan API key (etherscan.io/apis; 5 calls/s, 100k/day — the full
+census uses about 1,000). Put it in `.env` as `ETHERSCAN_API_KEY`. Also `RPC_ETH_MAINNET`, used
+for the head block and to confirm any candidate's receipt; the free `https://eth.drpc.org`
+suffices. **Do not use a transaction-list API for this** — the SequencerInbox's transactions
+carry ~199 KB of batch calldata each, and enumerating them would move ~266 GB. The census walks
+logs instead.
+
+**Run.** The tool runs a positive control before it trusts the source, and refuses to run if
+the control fails:
+
+```bash
+npm run census -- --api etherscan --dry-run                 # control only; must print "positive control PASSED"
+npm run census -- --api etherscan --from 15411056 --offset 1000 --throttle-ms 220
+```
+
+Block 15,411,056 is where the SequencerInbox proxy first has code (verified by bisection);
+`--to` defaults to the current head. The run takes roughly ten minutes. If your connection
+drops, the tool records the range it actually reached; resume with `--from <that block + 1>`.
+
+**Then** `python analysis/mainnet.py` again. The batch count will be *larger* than 1,332,810
+because the chain has advanced; Class A should still be 0, and the `CONTIGUOUS` line should
+cover your new head. If a Class A event has occurred since this paper's census, the tool will
+report it with its batch size and the paper's headline is superseded — which is the point of
+making this repeatable.
+
+**Do not** run `npm run census` against a database that already holds a census over an
+overlapping range without deleting the old scan rows first; `mainnet.py` will refuse to quote a
+rate over overlapping ranges, which is correct, but the fix is manual.
+
+The bounded `index-mainnet` scans (Bridge, OP Mainnet, Base) can be repeated the same way over
+their recorded ranges — they are listed in `mainnet_scans` — but need an archive RPC that
+serves wide `eth_getLogs`; see `README.md` for which free endpoints do.
+
+---
+
+## 9. What cannot be reproduced, and why
+
+**E2 — the 100 testnet runs — cannot be recollected.** They were collected on Ethereum Sepolia
+and its rollups (Arbitrum Sepolia, OP Sepolia). Sepolia's announced end of life is
+**30 September 2026**; after that date those networks are not maintained, and their state and
+the L1 they settle to are not available to transact against. `npm run run` remains in the
+repository as the record of how the data was collected, and the harness re-reads every
+protocol parameter live rather than from a constant, so it would run against a successor
+testnet — but the numbers it produced would be from a different chain at a different time and
+would not reproduce this paper's dataset. The shipped `bench.sqlite` is the primary artifact;
+treat it as an observational record, not a regenerable one.
+
+**E1 — the devnet censorship run — requires a local rollup you operate.** It needs
+`OffchainLabs/nitro-testnode` (nitro `v3.9.6-91bf578`, nitro-contracts `v3.1.0`), Docker with
+~10 GB free, and two post-deployment changes recorded in `docs/BLUEPRINT.md` §15:
+`delayBlocks` set to 60 via the UpgradeExecutor, and the sequencer restarted with
+`--node.delayed-sequencer.enable=false`. The procedure is step-by-step in BLUEPRINT §15 and
+§20.1. It can be repeated, and the structural results (batch semantics, retroactive buffer
+depletion) will reproduce; the **timing** will not — M-L5 is n = 1, on a chain with ~1 s L1
+blocks, and a rerun is a second sample, not a replication of the first. The E1 run's figures
+are not in `bench.sqlite`; they are reported in the paper from the run's recorded state.
+
+**The devnet buffer `threshold` of 600 is not what any production chain runs** (Arbitrum One
+reads 150 on-chain), so E1 timings are not portable even in principle.
+
+**Everything in §5–§7 is reproducible from the shipped files without any of the above**, and
+that is the reproducibility claim this project makes: a reader can verify every number in the
+paper, but not recollect the observations behind them.
+
+---
+
+## 10. Verification log
+
+Followed on a fresh clone, 2026-09-15, Windows 11, in a directory with no prior state:
+
+| Step | Result |
+|---|---|
+| `npm ci` + `npm run typecheck` | clean |
+| `python -m venv` + `pip install -r analysis/requirements.txt` | pandas 3.0.5, numpy 2.5.3, matplotlib 3.11.2 |
+| `sha256sum -c SHA256SUMS` | 3 × OK |
+| `npm run export` | 100 rows × 108 columns; CSV byte-identical to shipped |
+| `nonparametric.py` | ALL PASS |
+| `clockcheck.py` | 0 violations / 200 pairs |
+| `drift.py` | 3 DISPERSION flags, all arb-sepolia/forced; no DRIFT/REGIME |
+| `report.py`, `stability.py`, `figures.py` | ran; 6 figures written |
+| `mainnet.py` | CONTIGUOUS 15411056..25951325; 0 Class A in 1,332,810; CI [0, 2.768e-06] |
+| `reconcile.py` | 91 claims, 0 mismatches |
+
+Anything that failed on the first attempt, and what was changed in this document as a result,
+is listed in the commit that added this file.

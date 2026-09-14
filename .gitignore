@@ -16,3 +16,6 @@ __pycache__/
 
 # Scan logs from the mainnet indexer
 data/*.log
+
+# Python virtual environments (REPRODUCE.md creates one)
+.venv*/

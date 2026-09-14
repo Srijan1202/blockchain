@@ -800,9 +800,12 @@ nothing" produce identical output, and no amount of inspecting the *result* dist
 them — a broken census and a true zero look the same. The checks below were therefore built as
 positive controls and reconciliations, not as sanity-checks on an answer that looked wrong.
 
-That is not a hypothetical concern. **Three separate errors arose in this project, and each
+That is not a hypothetical concern. **Six separate errors arose in this project, and each
 would have produced a plausible result biased toward this paper's conclusion.** None was
-caught by the output looking suspicious; each was caught by a check that existed to catch it.
+caught by the output looking suspicious; each was caught by a check that existed to catch it,
+or by a check added because a previous one had. Six observed instances in one project is a
+different class of evidence from the claim that such errors *can* occur, which is why they are
+enumerated rather than summarised.
 
 **1. A provider-side filter that returned zero for a selector known to be present.**
 Blockscout's `method=` parameter returns zero items for `0x3e5aa082` — a selector we had
@@ -836,6 +839,34 @@ is quoted; contiguity is reported separately, because disjointness alone still p
 unexamined blocks *between* ranges where an event could sit. The phrase "across all of
 Nitro-era history" is licensed by the printed contiguity line, not by the author's arithmetic.
 
+**4. A uniqueness key that collapsed distinct events into one row.** `mainnet_events` was
+keyed on `(chain_key, tx_hash, class)`, so when one L1 transaction emitted several events of the
+same class only the first was stored. Row counts equalled distinct-*transaction* counts exactly,
+losing 57 events across three scans, and the table read as an event count while being a
+transaction count.
+*Check:* **row-count reconciliation against `logs_seen`** — every examined event must become a
+row, and a scan whose rows do not equal its events is not marked complete. The key now includes
+the log index.
+
+**5. Parallel block-timestamp fetches that dropped events on failure.** The indexer skipped
+any event whose block fetch failed, and under a rate-limiting endpoint this silently removed
+a further 44 Arbitrum messages. Unlike (4), it was **load-dependent and therefore
+irreproducible**: a re-run on a quiet endpoint would have produced a different, larger count
+and no explanation for the difference.
+*Check:* the same reconciliation as (4), plus **explicit drop accounting** — unresolvable
+events are retried, then counted, logged at error level, and written into the scan record.
+The reconciliation is what caught it: after the key was fixed, rows *still* fell short of
+events, which is how the second defect was found behind the first.
+
+**6. An output filter that masked the warnings from (5).** The scan's console output was
+piped through a pattern filter to make its summary readable, and the filter removed the very
+warning lines that would have reported the dropped blocks. "No warnings fired" was then
+reported as evidence that nothing had been dropped. It was an artifact of the filter.
+*Check:* none caught this directly — it was found because (4)'s reconciliation contradicted
+the "no warnings" reading. The lesson is procedural rather than mechanical: **absence of a
+warning in filtered output is not evidence**, and the drop count now lives in the database
+where a filter cannot remove it.
+
 Two further checks belong to the same family and are reported with the results they guard.
 The **clock-ordering check** (§9.7) tests the whole E2 dataset against a relation that admits
 no argument — a transaction cannot appear on L2 before the L1 block that carried it — after
@@ -848,6 +879,59 @@ The common shape is worth stating for anyone reproducing this. Every one of thes
 a rare-event study should therefore be instrumented to fail loudly on a known positive, rather
 than trusted to fail visibly on a true negative — because on a true negative there is nothing
 to see.
+
+#### What these checks would not catch
+
+Each check above catches a specific failure shape, and it is worth being precise about the
+shapes that remain undetected, because a reviewer will ask and because the list is what a
+future study should extend.
+
+**A provider returning plausible but wrong data that passes the positive control.** The
+control verifies that logs come back and decode to the expected shape. A source that returned
+*real-looking* logs with a corrupted `dataLocation` word — or that served a complete, correctly
+shaped log stream from which forced-inclusion batches had been omitted upstream — would pass
+every check here and produce the same zero. The control tests that the pipe is connected, not
+that what flows through it is faithful. The defence we have is cross-source agreement (§10.1),
+which is the next item's weakness.
+
+**A systematic bias present in both independent sources.** Two infrastructures agreeing rules
+out an error specific to one of them. It does not rule out an error they share — a common
+upstream index, a shared misreading of the event ABI, or a chain-level property that makes the
+`NoData` marker not mean what the source says it means. Our two sources are an explorer's
+indexed API and a direct RPC archive node, which are independent in operation but both
+ultimately derive from the same canonical chain data through the same ABI. Agreement between
+them is strong evidence against infrastructure error and weak evidence against interpretive
+error.
+
+**An error in the decode path that affects the control and the real data identically.** The
+positive control decodes with the same function as the census. If `decodeBatchLog` read the
+wrong 32-byte word for `dataLocation`, the control would report a plausible distribution
+(TxInput and Blob are both common values) and the census would report zero `NoData` — for the
+same wrong reason. We mitigated this by confirming the event's seven-word layout against the
+contract source and by observing that the decoded distribution shifts from TxInput to Blob at
+the block height where blob batching was adopted, which a mis-indexed word would not
+reproduce. That is corroboration, not proof; a decode error that happened to preserve that
+transition would survive it.
+
+**A true forced inclusion that does not emit `NoData`.** The census identifies candidates by
+the `dataLocation` marker because that is what the current `forceInclusion` emits. A past
+implementation that emitted a different marker, or none, would be invisible to it. We
+checked that all five implementations expose the same selector; we did not decompile each to
+confirm the emitted `dataLocation` value, and the five-implementation selector check does not
+cover that.
+
+**Errors in the parts of the pipeline that have no positive control.** The clock-ordering
+check has a natural impossibility to test against. The cost decomposition, the stage
+assignment, and the classification of Class B/C/D have none: a systematically wrong `M_C1`
+would reconcile against itself. Those rest on code review and on the export's provenance
+columns, not on an independent check.
+
+None of these gaps changes the headline, because each would need to hide a *positive*
+signal — a forced inclusion that occurred — and the structural argument of §9.5 predicts the
+absence independently of the census. But that is an argument, not a measurement, and the
+honest position is that the census is strong evidence the mechanism was not used, conditional
+on the `NoData` marker meaning what the source code says and on both data sources faithfully
+reflecting the chain.
 
 ---
 

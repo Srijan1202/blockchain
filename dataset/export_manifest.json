@@ -1,0 +1,68 @@
+{
+  "export_timestamp": "2026-09-14T19:04:35.406Z",
+  "git_commit": "ce94996bf9884d484a5ccb605621ce1374052e4a",
+  "rows": 100,
+  "csv": "data/export.csv",
+  "chain_ids": {
+    "eth-sepolia": 11155111,
+    "arb-sepolia": 421614,
+    "op-sepolia": 11155420
+  },
+  "l1_contracts_used": {
+    "arb-sepolia": {
+      "sequencerInbox": "0x6c97864CE4bEf387dE0b3310A44230f7E3F1be0D",
+      "inbox": "0xaAe29B0366299461418F5324a79Afc425BE5ae21",
+      "bridge": "0x38f918D0E9F1b721EDaA41302E399fa1B79333a9",
+      "rollup": "0xd80810638dbDF9081b72C1B33c65375e807281C8",
+      "outbox": "0x65f07C7D521164a4d5DaC6eB8Fac8DA067A3B78F"
+    },
+    "op-sepolia": {
+      "optimismPortal": "0x16Fc5058F25648194471939df75CF27A2fdC48BC"
+    }
+  },
+  "block_ranges": {
+    "arb-sepolia": {
+      "min": 306971076,
+      "max": 307222003
+    },
+    "op-sepolia": {
+      "min": 48546687,
+      "max": 48579396
+    },
+    "eth-sepolia": {
+      "min": 11663586,
+      "max": 11670942
+    }
+  },
+  "block_ranges_note": "Range of blocks actually OBSERVED. Excludes S5, whose block number is computed (l1Block + delayBlocks) and may lie in the future.",
+  "rpc_hosts": {
+    "RPC_ETH_SEPOLIA": "eth-sepolia.g.alchemy.com",
+    "RPC_ARB_SEPOLIA": "arb-sepolia.g.alchemy.com",
+    "RPC_OP_SEPOLIA": "opt-sepolia.g.alchemy.com"
+  },
+  "outcome_counts": {
+    "total": 100,
+    "success": 100,
+    "timeout": 0,
+    "pending": 0,
+    "failed": 0,
+    "incomplete": 0
+  },
+  "parameter_keys": [
+    "delayBlocks",
+    "delaySeconds",
+    "futureBlocks",
+    "futureSeconds",
+    "portalVersion",
+    "statedForcedBoundSec",
+    "totalDelayedMessagesRead"
+  ],
+  "decisions": {
+    "incomplete_runs": "EXPORTED, not excluded. Runs with outcome 'timeout' (or otherwise missing stages) appear as rows with null durations and is_complete=0. Dropping them would silently change the denominator: M-R1/M-R2/M-R3 are success, failure and timeout RATES, and a dataset that has already removed its timeouts cannot report them. Filter on is_complete or outcome in analysis, deliberately.",
+    "cost_columns_are_protocol_specific": "M_C3_op_l1_data_fee_wei is populated ONLY on the OP Stack and is a FEE in wei priced at the L1 gas price. M_C3_arb_l1_gas_allocation is populated ONLY on Arbitrum and is an L2 GAS ALLOCATION, already inside l2_gas_used, priced at the L2 gas price. They are different quantities in different units and are deliberately NOT pooled into one column. Never sum or compare them across protocols. See migration 003.",
+    "cross_protocol_comparison": "total_fee_wei is the only cross-protocol comparable cost figure: it means everything the transaction cost the user. Totals are comparable; decompositions are not. total_fee_wei - M_C3 compared across protocols is not like-for-like, because only the OP Stack has a separable, differently-priced data-availability component.",
+    "M_C4": "Left NULL on purpose. M-C4 is a ratio against a normal-path baseline, and choosing that baseline (median, paired run, per-campaign mean) is an analysis decision. CLAUDE.md section 3 keeps statistics in Python, so the per-run numerator is exported as M_C4_numerator_wei and the ratio is computed there against experiment A on the same chain.",
+    "mixed_clock": "Every latency metric carries <metric>_mixed_clock and <metric>_resolution_sec. Never report precision finer than the resolution column, and annotate any mixed-clock metric as such in figure captions (BLUEPRINT section 11).",
+    "S5_confidence": "S5 is the only inferred stage: force eligibility is computed from the live delaySeconds, never witnessed. S5_confidence records this per row."
+  }
+}
