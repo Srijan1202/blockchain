@@ -1,0 +1,42 @@
+{
+  "l2TxHash": "0x20c5985bde1c56f52fd25be0b2820493f0f8a5aa999421a30ab2833821255110",
+  "messageDataHash": "0xcbb27dd178bcc298e6f4180cf11fbb4f5006775c039351617fd58c8d9138be16",
+  "recipient": "0x000000000000000000000000000000000E1c5501",
+  "value": "12300000000000000",
+  "submitL1Hash": "0x9bbcf85f4ad4188971531417e1fb17c506eb6518f2b2fcf0c7cef144208ee199",
+  "submitL1Block": "3595",
+  "submitL1Timestamp": "1789059911",
+  "submitGasUsed": "87282",
+  "submitEffGasPrice": "1500000007",
+  "submitWallMs": 1789059911466,
+  "messageIndex": "106",
+  "kind": 3,
+  "sender": "0x6F2597DD1F08c87B2D8Fe23E9AAB6C1DE833eA38",
+  "baseFeeL1": "7",
+  "bridgeTimestamp": "1789059911",
+  "forceHash": "0x2fed1fd98fe6890f8bc9e450ca78c2cb5099a60a4014c5211d115a7b8d169615",
+  "forceBlock": "3687",
+  "forceTimestamp": "1789060004",
+  "forceGasUsed": "117759",
+  "forceEffGasPrice": "1500000007",
+  "l2Block": "5992",
+  "l2Timestamp": "1789059984",
+  "l2GasUsed": "21000",
+  "l2EffGasPrice": "100000000",
+  "bufBefore": [
+    "14400",
+    "14400",
+    "600",
+    "3008",
+    "500",
+    "3267"
+  ],
+  "bufAfter": [
+    "14400",
+    "14400",
+    "600",
+    "3595",
+    "500",
+    "3687"
+  ]
+}

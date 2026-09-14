@@ -62,8 +62,12 @@ export interface LogSource {
 }
 
 function hexToBigInt(v: unknown): bigint {
+  // Etherscan returns "0x" (no digits) for zero-valued fields such as
+  // logIndex 0. BigInt("0x") throws; treat it as 0. The Class A census
+  // completed before this was found, so no result depended on it, but a log at
+  // index 0 would have aborted the walk mid-run.
   const s = String(v ?? "0x0");
-  return s.startsWith("0x") ? BigInt(s) : BigInt(s);
+  return s === "0x" || s === "" ? 0n : BigInt(s);
 }
 
 /**
