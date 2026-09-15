@@ -1,6 +1,7 @@
 # Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups
 
-**Draft — §§1–11, §13 and Appendix A.** §12 (Related Work) is not drafted; citations pending verification.
+**Complete draft.** All citations in §12 verified against arXiv, the ACM Digital Library, IEEE
+Xplore and DBLP.
 > Section numbering is contiguous: the experiment matrix and metric definitions that stood as
 > separate sections in the research plan are folded into §4, and the results sections were
 > renumbered to close the gap.
@@ -10,7 +11,8 @@
 > censorship experiment; `[M]` the mainnet census (`mainnet_events` / `mainnet_scans`);
 > `[P]` a live on-chain parameter read; `[S]` source code of a deployed contract, read from
 > the implementation actually deployed; `[C]` a rollup configuration file, which is **not**
-> an on-chain read and is labelled separately for that reason. A claim resting on a **single observation is marked
+> an on-chain read and is labelled separately for that reason. Bracketed **numerals** — `[1]` to
+> `[6]` — are literature citations to the reference list, never provenance tags. A claim resting on a **single observation is marked
 > `n=1` in the sentence that makes it**, not in a footnote. No number in this draft was
 > written from memory.
 
@@ -60,9 +62,10 @@ measures the **Arbitrum Sepolia sequencer's delayed-inbox read cadence**, an ope
 configuration, and not the protocol; it is reported as such and does not transfer to mainnet.
 
 We release the harness, the dataset, and a reproducible devnet censorship protocol, along with
-the instrument-verification discipline the null result required. We know of no prior measurement
-of whether invoking the mechanism has ever been possible; §12 positions the work against the
-literature and is not yet drafted.
+the instrument-verification discipline the null result required. Prior work designs these
+mechanisms [1, 2], formally models them [3], analyses their usability from public metadata [4],
+or attacks the path that makes them necessary [5, 6]. To our knowledge this is the first work to
+measure whether invoking one has ever been possible.
 
 ---
 
@@ -82,10 +85,14 @@ risk assessments, and in the informal reasoning by which users accept a centrali
 It is also, in practice, an argument about a mechanism that is rarely exercised and — as we
 show — is *structurally difficult* to exercise while the system is behaving normally.
 
-The literature reflects this asymmetry. Mechanisms are designed and specified; some are
-formally modelled; the usability gap has been explicitly flagged. But the question a user
-would ask — *if I need this, what happens to me?* — is answered by specification rather than
-by measurement.
+The literature reflects this asymmetry. Escape-hatch mechanisms are designed and their ideal
+properties specified [1, 2]; forced transaction queues are formally modelled and model-checked
+[3]; the gap between a hatch being *present* and being *usable* has been explicitly flagged from
+public metadata and incident reports [4]; and the sequencer failure that would make a hatch
+necessary has been shown to be inducible at zero cost [5]. But the question a user would ask —
+*if I need this, what happens to me?* — is answered by specification rather than by measurement,
+and the prior question of whether the mechanism has ever been reachable at all is, as far as we
+can establish, unasked. §12 positions this work against each branch.
 
 ### 2.2 The gap we address
 
@@ -151,8 +158,10 @@ entries, two of which §10 conceded away; this one is shorter on purpose.
    exactly when the system is behaving [S, P, E2]; delay-buffer depletion is *retroactive*, so
    BoLD cannot engage during a first censorship incident [S, E1]; and forcing is *batch-priced*,
    so the cost of recourse is set by a queue depth the user can neither observe nor control
-   [S, E1]. We do not claim these are undocumented — §12 is not yet written, and that claim
-   would need it — only that they are verified here and their consequences drawn out.
+   [S, E1]. §12.5 settles which of these are new. Only the retroactive depletion is absent from
+   the prior literature and from the vendor's own documentation; the other two are consequences
+   of desiderata Gorzny et al. [1] set out in 2022, and our contribution to them is to locate
+   them in the deployed contract, state the mechanism exactly, and measure the first.
 
 3. **The architectural asymmetry, in what a user must do and what they are billed.** Arbitrum's
    forced path requires two user-initiated L1 transactions and the reconstruction of six event
@@ -1515,8 +1524,132 @@ the reason we can state that no number in this paper was written from memory.
 
 ## 12. Related Work
 
-*Not drafted. Citations are being verified; this section will position the work against the
-design, formal-modelling, usability-flagging and attack literature summarised in §2.1.*
+Work on rollup escape hatches divides four ways. It **designs** them, **formally models** them,
+**analyses their usability from public metadata**, or **attacks the path that makes them
+necessary**. No branch measures what invoking one costs, and none asks whether invoking one has
+ever been possible. That is the gap this paper occupies.
+
+### 12.1 Design
+
+Gorzny, Lin and Derka [1] is the foundational paper in this area. It surveys the escape-hatch
+mechanisms rollups had deployed by 2022 and establishes a wishlist of properties a trustworthy
+hatch should satisfy — among them *Modular*, *Secure*, *Correcting*, *Support for Arbitrary State
+Escape*, *(Transaction) Efficient*, *Global*, and *Automatic & Live*. Two of those bear directly
+on our results.
+
+*Automatic & Live* states that "the escape hatch should always be automatically available under
+certain conditions", and names the likely conditions as "the proof of censorship or long periods
+of time between updates from the rollup operator" [1]. That is the requirement whose deployed
+realisation we characterise in §9.2: Arbitrum's gate is a block-count elapsed since delivery,
+which is available automatically — but only in a state the chain does not enter while it is
+behaving. Gorzny et al. name the property as a desideratum; we show what satisfying it in this
+particular form implies, and measure how often the condition has actually obtained.
+
+*(Transaction) Efficient* anticipates part of what §9.4 reports. Gorzny et al. observe that "the
+invocation of escape hatch functionality is likely to occur simultaneously among all users and
+applications when a rollup begins to censor transactions or becomes inoperative", and that users
+of a force-to-L1 mechanism "may have a more difficult time escaping during congestion on the
+underlying layer one" [1]. The concern that the cost of escape is set by *other people's*
+correlated demand is therefore prior work, and we do not claim it. What is not in [1] is the
+mechanism by which that coupling occurs on Arbitrum. It is not L1 gas-price congestion: it is
+inside a single call. `forceInclusion(_totalDelayedMessagesRead, …)` reads *up to* a count and
+sweeps every message queued ahead of the caller, so a user pays for strangers' messages within
+their own transaction, at a queue depth they can neither observe in advance nor control [S].
+§9.4 states that mechanism and §7.6 prices one instance of it.
+
+Figueira, Derka, Chiu and Gorzny [2] move from properties to a concrete design, motivated by the
+observation that escape hatches "have received limited attention in academic literature and
+real-world projects" and that "it is unclear what escaping means for non-transferrable state
+recorded inside of smart contracts". Their contribution is a resolver-contract architecture that
+lets users escape funds locked inside L2 smart contracts rather than only tokens held directly.
+[2] contains no cost analysis of any forced-inclusion call and no measurement of a deployed
+chain; it is a design paper, and says so.
+
+### 12.2 Formal modelling
+
+Chaliasos, Firsov and Livshits [3] give Alloy models of forced transaction queues, safe
+blacklisting and upgradeability, identify pitfalls in existing designs, and model-check an
+improved one; they then propose translating the Alloy properties into property-based testing
+invariants. This is the branch closest to a correctness claim about the mechanism, and it is
+complementary to ours in a specific way: [3] establishes what a forced-inclusion queue *must*
+do if it is reached, over an abstract model. Our result is about reachability of the deployed
+one, which a model of the queue's internal behaviour does not address and is not intended to.
+The two questions are independent — a queue can be provably correct and never entered.
+
+### 12.3 Usability analysis from public metadata
+
+Ishmaev, Anceaume, Frey and Taïani [4] is the nearest prior work to ours in question, and the
+furthest in method. They adapt Ethical Risk Analysis to rollup architectures and pair it with a
+cross-sectional snapshot of 129 L2BEAT projects and a hand-curated 2022–2025 incident set,
+explicitly covering forced-inclusion usability alongside upgrade timing, exit windows, proposer
+liveness and data availability. Their headline figures are that instant upgrades without exit
+windows appear in about 86% of projects and proposer controls that can freeze withdrawals in
+about 50%. On forced inclusion specifically, the L2BEAT risk row "there is no mechanism to have
+transactions be included if the sequencer is down or censoring" is flagged for **17 of the 129
+projects, 13.2%** [4].
+
+That figure counts the *nominal absence* of a mechanism, and [4] is careful that this is not the
+quantity of interest: the "L2BEAT data flag is a nominal indicator but not sufficient proxy for
+forced inclusion usability", and "many incidents involve outages or congestion where a forced
+path either existed but had parameters or operational requirements that made it impractical for
+ordinary users and relayers" [4]. They close by recommending that forced-inclusion designs be
+evaluated "for operational readiness rather than presence, including documented parameters,
+public relayers, and tested fallbacks".
+
+We take that recommendation literally, and it is the most direct statement of this paper's
+purpose we have found in the literature. [4] identifies the presence/usability gap from
+documentation and incident reports; we measure across it. Where [4] can say that a mechanism is
+flagged as present, we can say for one chain how far from eligibility every message it has ever
+received actually got (§8.1), what invoking the mechanism costs on a testnet (§7.3), and how many
+L1 transactions and reconstructed fields a user must produce (§7.4). Arbitrum One is one of the
+112 projects on the other side of that 17, and the census in §8.1 is a measurement of exactly
+what [4] says the flag cannot proxy for.
+
+### 12.4 Attacks on the path
+
+Li, Sun, He, Chu, Zhou, Luo, Chen and Zhang [5] construct a denial-of-sequencing attack that
+disrupts L2 liveness at zero cost, by crafting transactions that pass the sequencer's
+pre-execution legality check and are then discarded by the sequencer itself. Their result and
+ours meet at a single point: [5] produces cheaply the exact condition under which the escape
+hatch is supposed to be a user's recourse, and §8.1 shows that on Arbitrum One that condition has
+never been sustained long enough for the recourse to become available. Read together, they say
+that the cost of creating the emergency and the cost of surviving it are not symmetric.
+
+Ferreira Torres, Mamuti, Weintraub, Nita-Rotaru and Shinde [6] measure MEV extraction across
+Layer-2 rollups, and are methodologically the closest published work to this one: a large-scale
+empirical study of what a centralised sequencer's ordering power is actually worth in practice
+rather than in principle. Their subject is the sequencer's discretion when it is *exercised*;
+ours is the user's recourse when it is *abused*. Both are measurements of the same
+centralisation from opposite sides.
+
+### 12.5 What is new here
+
+Against that literature, three things:
+
+1. **The reachability measurement.** We know of no prior work that asks how close any deployed
+   rollup has come to satisfying its own forced-inclusion precondition. [4] measures presence
+   from metadata, [1] and [2] specify what a hatch should do, [3] models what it does once
+   entered. The question of whether it has ever been enterable is, as far as we can establish,
+   unasked. §8.1 answers it for Arbitrum One over full history.
+
+2. **A measured cost vector for the forced path.** [1]'s *(Transaction) Efficient* property and
+   [4]'s "operational readiness" recommendation both call for exactly this and neither supplies
+   it. [2] and [3] contain no cost figures for a deployed chain.
+
+3. **Retroactive delay-buffer depletion.** Arbitrum's own documentation describes the buffer as
+   consumed "every time the sequencer doesn't timely process a message", and states the force
+   window as the lesser of `delayBuffer` and `delayBlocks`, but it is silent on *when* the buffer
+   is written; no nitro-contracts release note mentions the delay buffer at all. The consequence
+   in §9.5 — that `DelayBuffer.update()` is reachable only from a batch post reading new delayed
+   messages and from `forceInclusion` itself, so BoLD cannot engage during a first incident — is
+   not stated in either source. The same documentation calls `delayBlocks` "a constant currently
+   set to 24 hours"; our archive reads find it was 5,760 blocks before block 21,830,860 and 7,200
+   after (§8.1), which is one reason §10.5 treats every parameter as a version snapshot.
+
+We make no novelty claim for the mutual exclusivity of `forceInclusion`'s two preconditions or
+for the batch pricing of forcing. Both are consequences of the properties [1] set out as
+desiderata, and a reader of [1] would recognise them; our contribution to those two is to locate
+them in the deployed contract, state the mechanism precisely, and measure the first one.
 
 ---
 
@@ -1608,6 +1741,44 @@ mechanism rehearsable, since nothing in our results suggests the escape hatch do
 and four years of operation have never once created the conditions under which anyone could
 find out.
 
+
+---
+
+## References
+
+[1] Jan Gorzny, Lin Po-An, and Martin Derka. **Ideal Properties of Rollup Escape Hatches.**
+In *Proceedings of the 3rd International Workshop on Distributed Infrastructure for the Common
+Good* (DICG '22), co-located with Middleware 2022, Quebec City, Canada, 7 November 2022,
+pp. 7–12. DOI [10.1145/3565383.3566107](https://doi.org/10.1145/3565383.3566107). Quantstamp.
+
+[2] Francisco Gomes Figueira, Martin Derka, Ching Lun Chiu, and Jan Gorzny. **A Practical Rollup
+Escape Hatch Design.** arXiv:2503.23986 [cs.DC], 31 March 2025. Short version in *IEEE
+International Conference on Blockchain and Cryptocurrency* (ICBC 2025), Pisa, Italy, 2–6 June
+2025, IEEE Xplore document 11114670. Zircuit.
+
+[3] Stefanos Chaliasos, Denis Firsov, and Benjamin Livshits. **Towards a Formal Foundation for
+Blockchain Rollups.** arXiv:2406.16219 [cs.CR], 23 June 2024; v3, 15 September 2025. Imperial
+College London / Matter Labs / zkSecurity.
+
+[4] Georgy Ishmaev, Emmanuelle Anceaume, Davide Frey, and François Taïani. **Ethical Risk
+Analysis of L2 Rollups.** arXiv:2512.12732 [cs.DC], 14 December 2025. Université de Rennes /
+Inria / CNRS / IRISA.
+
+[5] Zihao Li, Zhiyuan Sun, Zheyuan He, Jinzhao Chu, Hao Zhou, Xiapu Luo, Ting Chen, and Yinqian
+Zhang. **Denial of Sequencing Attacks in Ethereum Layer 2 Rollups.** In *Proceedings of the 2025
+ACM SIGSAC Conference on Computer and Communications Security* (CCS '25), Taipei, Taiwan,
+13–17 October 2025, pp. 2084–2098.
+DOI [10.1145/3719027.3765100](https://doi.org/10.1145/3719027.3765100).
+
+[6] Christof Ferreira Torres, Albin Mamuti, Ben Weintraub, Cristina Nita-Rotaru, and Shweta
+Shinde. **Rolling in the Shadows: Analyzing the Extraction of MEV Across Layer-2 Rollups.** In
+*Proceedings of the 2024 ACM SIGSAC Conference on Computer and Communications Security*
+(CCS '24).
+
+*Protocol sources cited as [S] or [C] in the text — `nitro-contracts` v3.1.0, the deployed
+Arbitrum One `SequencerInbox` implementations, the OP Stack rollup configurations, and the
+Arbitrum documentation quoted in §12.5 — are identified inline at the point of use, with the
+commit or address they were read from recorded in the dataset rather than here.*
 
 ---
 
