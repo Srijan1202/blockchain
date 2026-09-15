@@ -1,6 +1,6 @@
 # Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups
 
-**Draft — §§1–11 and 13.** §12 (Related Work) is not drafted; citations pending verification.
+**Draft — §§1–11, §13 and Appendix A.** §12 (Related Work) is not drafted; citations pending verification.
 > Section numbering is contiguous: the experiment matrix and metric definitions that stood as
 > separate sections in the research plan are folded into §4, and the results sections were
 > renumbered to close the gap.
@@ -59,9 +59,10 @@ on OP Sepolia, n = 25 per cell [E2]. Every Arbitrum run was auto-included, so th
 measures the **Arbitrum Sepolia sequencer's delayed-inbox read cadence**, an operator
 configuration, and not the protocol; it is reported as such and does not transfer to mainnet.
 
-We release the harness, the dataset, and a reproducible devnet censorship protocol. Prior work
-designs these mechanisms, formally models them, flags the usability gap, or attacks the path.
-To our knowledge this is the first work to measure whether invoking it has ever been possible.
+We release the harness, the dataset, and a reproducible devnet censorship protocol, along with
+the instrument-verification discipline the null result required. We know of no prior measurement
+of whether invoking the mechanism has ever been possible; §12 positions the work against the
+literature and is not yet drafted.
 
 ---
 
@@ -150,7 +151,7 @@ entries, two of which §10 conceded away; this one is shorter on purpose.
    exactly when the system is behaving [S, P, E2]; delay-buffer depletion is *retroactive*, so
    BoLD cannot engage during a first censorship incident [S, E1]; and forcing is *batch-priced*,
    so the cost of recourse is set by a queue depth the user can neither observe nor control
-   [S, E1]. We do not claim these are undocumented — §13 is not yet written, and that claim
+   [S, E1]. We do not claim these are undocumented — §12 is not yet written, and that claim
    would need it — only that they are verified here and their consequences drawn out.
 
 3. **The architectural asymmetry, in what a user must do and what they are billed.** Arbitrum's
@@ -163,9 +164,11 @@ entries, two of which §10 conceded away; this one is shorter on purpose.
 4. **A reproducible apparatus, and a discipline for measuring rare events.** A devnet protocol
    that induces genuine censorship and recovers from it — which gives an existence proof that
    the mechanism works, on **n = 1** and at parameters no production chain runs (§10.2), and
-   not a characterisation of cost. Alongside it: the released harness and dataset (§9), and
-   the instrument-verification practice of §8.8, grounded in seven measurement errors that
-   arose here and each of which would have biased the result toward this paper's conclusion.
+   not a characterisation of cost. Alongside it: the released harness and dataset (§11), and
+   the instrument-verification practice of §8.8 — an eight-check suite for rare-event
+   measurement, together with a statement of what it would *not* catch, grounded in seven
+   measurement errors that arose here (Appendix A), each of which would have biased the result
+   toward this paper's conclusion.
 
 ---
 
@@ -265,8 +268,8 @@ has decided not to rely on the sequencer. Formally, for a transaction *t* on rol
 
 ### 4.2 The stage model
 
-A run is decomposed into stages S1–S9, each recorded with a block number, a timestamp, a clock
-source, and a confidence:
+A run is decomposed into stages S1–S9 (Table 1), each recorded with a block number, a timestamp,
+a clock source, and a confidence:
 
 | Stage | Meaning | Clock |
 |---|---|---|
@@ -291,8 +294,8 @@ metric both families genuinely share), **M-L3** (S2 → S7, forced path end-to-e
 
 ### 4.3 The three-clock discipline
 
-There are exactly three clocks, and mixing them silently is the failure mode that produces
-confidently wrong latencies:
+There are exactly three clocks (Table 2), and mixing them silently is the failure mode that
+produces confidently wrong latencies:
 
 | Clock | Resolution | Valid for |
 |---|---|---|
@@ -308,6 +311,9 @@ admits no argument — a transaction cannot appear on L2 before the L1 block tha
 and report the result as a validity check rather than assuming it.
 
 ### 4.4 Environments, and what each can support
+
+No single environment can answer the research question; Table 3 states what each can support,
+and the design uses all three for that reason.
 
 | | E1 devnet | E2 public testnet | E3 mainnet |
 |---|---|---|---|
@@ -472,7 +478,7 @@ statistic is a median of per-run values rather than a ratio of medians, the text
 ### 7.1 Coverage and reliability
 
 Every cell is complete: 25 runs, 25 successes, no timeouts and no incomplete lifecycles, so
-`n_used = n_total` throughout and no denominator silently shrinks [E2].
+`n_used = n_total` throughout and no denominator silently shrinks (Table 4) [E2].
 
 | Cell | n | success | exact binomial 95% CI |
 |---|---|---|---|
@@ -497,7 +503,8 @@ protocol reason to match Arbitrum One's — and *not* a forced-path latency. On 
 is the derivation pipeline's deposit-inclusion delay, which is governed by the sequencer's
 configured L1 confirmation depth and is likewise an operator setting. The comparison below is
 real and reproducible on these two testnets; it is not a comparison of the two protocols'
-forced paths, because on Arbitrum the forced path was never entered.
+forced paths, because on Arbitrum the forced path was never entered. Table 5 gives the
+distribution.
 
 | Cell | median | min | max |
 |---|---|---|---|
@@ -542,7 +549,7 @@ resolution, and we do not read a difference into them.
 
 ### 7.3 RQ2 / H2 — cost, and why the totals must not be compared naively
 
-Median `total_fee_wei`, the only cross-protocol comparable cost figure [E2]:
+Median `total_fee_wei`, the only cross-protocol comparable cost figure, is in Table 6 [E2]:
 
 | Cell | median total_fee_wei | forced / normal |
 |---|---|---|
@@ -567,7 +574,7 @@ generated with the figure states that `total_fee_wei` is the only cross-protocol
 cost column and why — see §7.3 and the data dictionary.
 
 **The decomposition is the centrepiece, because the two totals are composed incomparably.**
-Per-run component shares of `total_fee_wei`, medians with ranges [E2]:
+Table 7 gives per-run component shares of `total_fee_wei`, medians with ranges [E2]:
 
 | | L1 submission (M-C1) | L2 execution (M-C3) |
 |---|---|---|
@@ -603,7 +610,7 @@ practically: omitting it understates the true OP normal-path cost by about 46%.
 
 ### 7.4 RQ4 / H4 — required user action is structural, not incidental
 
-**M-U1**, counted from what was actually sent rather than from protocol design [E2]:
+**M-U1**, counted from what was actually sent rather than from protocol design, is in Table 8 [E2]:
 
 | Cell | M-U1 observed |
 |---|---|
@@ -648,7 +655,7 @@ figures in this subsection rest on a single run (n = 1).**
 Censorship was demonstrated rather than assumed: across the full 60-block window the
 transaction was absent from every poll while the sequencer produced **47 L2 blocks of other
 traffic** and `totalDelayedMessagesRead` stayed frozen. Liveness and exclusion were observed
-concurrently, which is what distinguishes censorship from a halt.
+concurrently, which is what distinguishes censorship from a halt. Table 9 gives the run.
 
 | Quantity | Value (n = 1) |
 |---|---|
@@ -761,7 +768,7 @@ value in force when it was waiting. `delaySeconds` stayed at 86,400 throughout, 
 the block gate (≈19 h) was the tighter of the two; using it is the conservative choice, since
 it makes eligibility *easier* to reach.
 
-**Read delay distribution**, in L1 blocks from delivery to the batch that read it
+**Read delay distribution** (Table 10), in L1 blocks from delivery to the batch that read it
 (all 2,563,796 messages; the batch stream reaches chain head, so none is uncovered) [M]:
 
 | percentile | blocks | ≈ at 12 s |
@@ -780,8 +787,8 @@ it makes eligibility *easier* to reach.
 retryable ticket delivered at block 24,179,652 on approximately 2025-12-25, read 1,250 blocks
 later against a window of 7,200.
 
-The incidents are the sequencer's outage history, and they are visible here as clusters. The
-largest, by how close they came [M]:
+The incidents are the sequencer's outage history, and they are visible here as clusters. Table 11
+gives the largest, by how close they came [M]:
 
 | ≈ date | messages delayed | max delay | fraction of window |
 |---|---|---|---|
@@ -842,6 +849,10 @@ check had [S, P]. A census pointed at the wrong contract or matching only the cu
 implementation's selector would return zero for reasons unrelated to the chain.
 
 ### 8.3 What was examined
+
+Table 12 states the scope of each scan. Only the Arbitrum One SequencerInbox census and the
+read-delay census are full-history; the OP Stack rows are bounded windows, and no claim in this
+section generalises beyond them.
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
@@ -950,83 +961,66 @@ or by a check added because a previous one had, and the seventh by a reviewer. S
 instances in one project is a different class of evidence from the claim that such errors
 *can* occur, which is why they are enumerated rather than summarised.
 
-**1. A provider-side filter that returned zero for a selector known to be present.**
-Blockscout's `method=` parameter returns zero items for `0x3e5aa082` — a selector we had
-observed on that exact address moments earlier — and zero for the method *name* as well. It
-fails silently rather than erroring. Used naively it would have reported "zero forced
-inclusions across all history" in one request, with no symptom of malfunction.
-*Check:* a **positive control** runs before every census and tests the source against
-independently confirmed facts — that logs come back at all, and that every one decodes to the
-expected seven-word shape. The census refuses to run if the control fails, and the control's
-result is printed with the census output rather than assumed. Consequently no provider-side
-method filter is used anywhere in this work: `dataLocation` is decoded locally from each log's
-own data word.
+The instance-by-instance account is in **Appendix A**; what follows here is the part that
+transfers to another study — the checks themselves, the one instance no check could have
+caught, and an analysis of the shapes that remain undetected.
 
-**2. An analysis that silently dropped every census row from the binomial denominator.**
-`analysis/mainnet.py` selected scans with `target_label == "SequencerInbox"`, while the census
-writes `SequencerInbox:logcensus`. The Class A numerator was unaffected — it was zero either
-way — so the reported interval was computed over only the RPC-scanned batches. The error was
-invisible in the output: a valid-looking CI over a smaller *n*, biasing toward a *wider*
-interval here, but the same class of error over a larger *n* would have narrowed it.
-*Check:* a **denominator reconciliation** — the coverage table prints `logs_seen` per scan and
-the rate is computed from their sum, so numerator and denominator are visible together and can
-be added up by hand. Both scan routes now contribute to the same population.
+**The check suite.** Eight checks, stated in the form another rare-event study could adopt.
+Each exists because something in this project failed in the shape it catches.
 
-**3. Overlapping scan ranges double-counting the denominator.** Two census windows overlapped
-(one was fully contained in the other), and a third overlapped an earlier RPC scan. Summing
-their `logs_seen` would have inflated *n* and **narrowed the confidence interval** — failing in
-precisely the direction that flatters a "never used" conclusion, and producing a more
-impressive-looking bound from less evidence.
-*Check:* **overlap detection plus a contiguity check**. Overlaps are reported before any rate
-is quoted; contiguity is reported separately, because disjointness alone still permits
-unexamined blocks *between* ranges where an event could sit. The phrase "across all of
-Nitro-era history" is licensed by the printed contiguity line, not by the author's arithmetic.
+1. **A positive control against an independently confirmed fact, run before every census.**
+   Test the source for something you have separately observed to be present, and refuse to run
+   if the test fails. Print the control's result alongside the census output rather than
+   assuming it. This is the only check that distinguishes "the source says zero" from "the
+   source is broken", and it is why no provider-side method filter is used anywhere in this
+   work: `dataLocation` is decoded locally from each log's own data word.
+2. **Denominator reconciliation.** Print the population each scan contributed next to the
+   numerator, so the rate behind any interval can be added up by hand. A rate quoted from a
+   single aggregate hides a filter that silently shrank what it was computed over.
+3. **Overlap detection, reported before any rate is quoted.** Overlapping ranges inflate a
+   denominator and *narrow* a confidence interval — a failure in the direction that flatters a
+   null result.
+4. **A contiguity check, kept separate from overlap detection.** Disjointness alone still
+   permits unexamined blocks *between* ranges. Any phrase of the form "across all of X" should
+   be licensed by a printed contiguity line, not by the author's arithmetic.
+5. **Row-count reconciliation against events examined.** Every examined event must become a
+   stored row, and a scan whose rows fall short of its events is not marked complete. This
+   catches uniqueness keys that collapse distinct events and fetch paths that discard them, and
+   it keeps catching: after one such defect was fixed here, rows still fell short, which is how
+   a second was found behind the first.
+6. **Explicit drop accounting, written to the database rather than the log.** Unresolvable
+   items are retried, then counted, logged at error level, *and* written into the scan record.
+   A count that lives only in console output can be removed by a pattern filter; a count in the
+   data cannot. Absence of a warning in filtered output is not evidence.
+7. **Completeness tests internal to the data, where the data carries its own sequence.**
+   Delayed-message indices and batch sequence numbers are dense, so contiguity can be checked
+   without reference to any external source — which is what makes it a stronger test than a
+   positive control. The read-delay census of §8.1 rests on exactly this: 0 missing indices of
+   2,563,796.
+8. **An impossibility test over the whole dataset.** The clock-ordering check (§7.7) tests a
+   relation that admits no argument — a transaction cannot appear on L2 before the L1 block
+   that carried it — and was added after the E1 run produced exactly that impossibility. Where
+   such a relation exists, it is free; §7.7 reports 0 violations over 200 pairs.
 
-**4. A uniqueness key that collapsed distinct events into one row.** `mainnet_events` was
-keyed on `(chain_key, tx_hash, class)`, so when one L1 transaction emitted several events of the
-same class only the first was stored. Row counts equalled distinct-*transaction* counts exactly,
-losing 57 events across three scans, and the table read as an event count while being a
-transaction count.
-*Check:* **row-count reconciliation against `logs_seen`** — every examined event must become a
-row, and a scan whose rows do not equal its events is not marked complete. The key now includes
-the log index.
+A ninth practice is not a check but makes one possible: the census records **which source
+produced each range**, so the agreement between two independent infrastructures (§8.1) is a
+property of the data rather than a claim about it.
 
-**5. Parallel block-timestamp fetches that dropped events on failure.** The indexer skipped
-any event whose block fetch failed, and under a rate-limiting endpoint this silently removed
-a further 44 Arbitrum messages. Unlike (4), it was **load-dependent and therefore
-irreproducible**: a re-run on a quiet endpoint would have produced a different, larger count
-and no explanation for the difference.
-*Check:* the same reconciliation as (4), plus **explicit drop accounting** — unresolvable
-events are retried, then counted, logged at error level, and written into the scan record.
-The reconciliation is what caught it: after the key was fixed, rows *still* fell short of
-events, which is how the second defect was found behind the first.
-
-**6. An output filter that masked the warnings from (5).** The scan's console output was
-piped through a pattern filter to make its summary readable, and the filter removed the very
-warning lines that would have reported the dropped blocks. "No warnings fired" was then
-reported as evidence that nothing had been dropped. It was an artifact of the filter.
-*Check:* none caught this directly — it was found because (4)'s reconciliation contradicted
-the "no warnings" reading. The lesson is procedural rather than mechanical: **absence of a
-warning in filtered output is not evidence**, and the drop count now lives in the database
-where a filter cannot remove it.
-
-**7. A 20,000-block sample generalised to four years of history.** The bounded Bridge scan
-found zero escape-hatch messages and zero Class B events, and an earlier draft reported both as
+**The seventh instance is stated here rather than in the appendix, because it is the only one
+no check above would have caught — and because it is what motivates the rest.** A
+**20,000-block sample was generalised to four years of history.** The bounded Bridge scan found
+zero escape-hatch messages and zero Class B events, and an earlier draft reported both as
 properties of the chain — "not one user-submitted escape-hatch message", "Class B: zero". Over
 full history the counts are 357 and 8,548 (§8.4, §8.5). Worse, the sample could not answer
 whether `forceInclusion` had ever been reachable, and the draft's headline implicitly assumed
-it had. This was the one error not caught by a check: it was caught by a referee asking the
-question the sample could not answer, which is a reminder that a positive control tests the
-pipe, not the sampling frame. The full-history census of §8.1 exists because of it, and its
-built-in completeness test — index contiguity, 0 missing of 2,563,796 — is the check that
-should have been there from the start.
+it had. It was caught by a referee asking the question the sample could not answer.
 
-Two further checks belong to the same family and are reported with the results they guard.
-The **clock-ordering check** (§7.7) tests the whole E2 dataset against a relation that admits
-no argument — a transaction cannot appear on L2 before the L1 block that carried it — after
-the E1 run produced exactly that impossibility. And the census records **which source produced
-each range**, so the agreement between two independent infrastructures (§8.1) is a property
-of the data rather than a claim about it.
+Every check in the list above validates how data was fetched; none of them asks whether the
+right data was requested. A positive control tests the pipe, not the sampling frame, and no
+amount of instrumentation on a 20,000-block window makes it a statement about four years. The
+full-history census of §8.1 exists because of this error, and check 7 — the completeness test
+the data validates itself against, needing no external source to be trusted — is the one that
+should have been there from the start.
 
 The common shape is worth stating for anyone reproducing this. Every one of these failures is
 *silent*, *plausible*, and *directionally favourable* to the hypothesis. Measurement code for
@@ -1320,7 +1314,7 @@ claim in this paper rests on a p95 or p99, and the dataset does not support one.
 
 Our sample size was chosen against a target of a 95% CI half-width within ±10% of the median.
 **In three of the four cells that target is finer than the clock resolution, so no sample size
-could have met it** [E2]:
+could have met it** (Table 13) [E2]:
 
 | Cell | metric | ±10% of median | clock resolution | askable? |
 |---|---|---|---|---|
@@ -1364,7 +1358,7 @@ Brown–Forsythe test of first half against second half catches a change in *dis
 stable median, which both of the others are blind to because they are tests of location.
 Spearman and Brown–Forsythe p-values are seeded permutation tests; the runs null is enumerated
 exactly rather than normal-approximated, because after dropping ties the group sizes are around
-ten [E2].
+ten. Table 14 reports every cell and metric [E2].
 
 | Cell | metric | ρ | p(ρ) | runs | exp | p(runs) | BF | p(BF) | IQR 1st → 2nd |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1600,7 +1594,7 @@ selector we had just observed, an analysis dropping rows from a binomial denomin
 overlapping ranges narrowing a confidence interval, a uniqueness key collapsing distinct
 events, parallel fetches discarding events whose block lookup failed under load, an output
 filter that hid the warnings about it, and a 20,000-block sample generalised to four years of
-history. Seven in all, enumerated in §8.8. Six were caught by a check built to catch them — a
+history. Seven in all: the argument and the checks in §8.8, the case-by-case account in Appendix A. Six were caught by a check built to catch them — a
 positive control against a known-present selector, a denominator reconciliation, contiguity and
 overlap detection, a rule that a scan is not complete unless every examined event became a row.
 The seventh was caught by a referee, and it is the one that changed a conclusion.
@@ -1613,3 +1607,68 @@ ever occurs. We would also note that the most useful thing an operator could do 
 mechanism rehearsable, since nothing in our results suggests the escape hatch does not work,
 and four years of operation have never once created the conditions under which anyone could
 find out.
+
+
+---
+
+## Appendix A. The six instrument failures caught by a check
+
+Referenced from §8.8, which states the argument and the resulting check suite. Each entry gives
+the defect, how it would have biased the result, and the numbered check from §8.8 that caught it
+or was added because of it. The seventh failure — a 20,000-block sample generalised to four
+years of history — is in §8.8 itself, because no check in the suite would have caught it.
+
+**1. A provider-side filter that returned zero for a selector known to be present.**
+Blockscout's `method=` parameter returns zero items for `0x3e5aa082` — a selector we had
+observed on that exact address moments earlier — and zero for the method *name* as well. It
+fails silently rather than erroring. Used naively it would have reported "zero forced
+inclusions across all history" in one request, with no symptom of malfunction.
+*Check 1* (positive control). The control tests that logs come back at all and that every one
+decodes to the expected seven-word shape. This instance is also why check 1 is stated as a
+prohibition as well as a test: no provider-side method filter is used anywhere in this work.
+
+**2. An analysis that silently dropped every census row from the binomial denominator.**
+`analysis/mainnet.py` selected scans with `target_label == "SequencerInbox"`, while the census
+writes `SequencerInbox:logcensus`. The Class A numerator was unaffected — it was zero either
+way — so the reported interval was computed over only the RPC-scanned batches. The error was
+invisible in the output: a valid-looking CI over a smaller *n*, biasing toward a *wider*
+interval here, but the same class of error over a larger *n* would have narrowed it.
+*Check 2* (denominator reconciliation). The coverage table prints `logs_seen` per scan and the
+rate is computed from their sum. Both scan routes now contribute to the same population.
+
+**3. Overlapping scan ranges double-counting the denominator.** Two census windows overlapped
+(one was fully contained in the other), and a third overlapped an earlier RPC scan. Summing
+their `logs_seen` would have inflated *n* and **narrowed the confidence interval** — failing in
+precisely the direction that flatters a "never used" conclusion, and producing a more
+impressive-looking bound from less evidence.
+*Checks 3 and 4* (overlap detection; contiguity). This instance is why the two are separate:
+resolving the overlaps would have left the ranges disjoint but still said nothing about blocks
+*between* them.
+
+**4. A uniqueness key that collapsed distinct events into one row.** `mainnet_events` was
+keyed on `(chain_key, tx_hash, class)`, so when one L1 transaction emitted several events of the
+same class only the first was stored. Row counts equalled distinct-*transaction* counts exactly,
+losing 57 events across three scans, and the table read as an event count while being a
+transaction count.
+*Check 5* (row-count reconciliation against `logs_seen`). The key now includes the log index.
+
+**5. Parallel block-timestamp fetches that dropped events on failure.** The indexer skipped
+any event whose block fetch failed, and under a rate-limiting endpoint this silently removed
+a further 44 Arbitrum messages. Unlike (4), it was **load-dependent and therefore
+irreproducible**: a re-run on a quiet endpoint would have produced a different, larger count
+and no explanation for the difference.
+*Checks 5 and 6* (row-count reconciliation; explicit drop accounting). Check 5 is what caught
+it: after the key was fixed, rows *still* fell short of events.
+
+**6. An output filter that masked the warnings from (5).** The scan's console output was
+piped through a pattern filter to make its summary readable, and the filter removed the very
+warning lines that would have reported the dropped blocks. "No warnings fired" was then
+reported as evidence that nothing had been dropped. It was an artifact of the filter.
+*Check:* none caught this directly — it was found because (4)'s reconciliation contradicted the
+"no warnings" reading. Check 6 exists because of it: the drop count now lives in the database,
+where a filter cannot remove it.
+
+Two of these deserve to be read together. (5) was found only because (4)'s reconciliation
+contradicted a "no warnings fired" reading that was an artifact of (6)'s filter — three defects
+in one causal chain, of which the mechanical check caught one and the other two were exposed by
+the contradiction it created.
