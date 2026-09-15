@@ -377,6 +377,64 @@ def _iqr(x: list[float]) -> float:
     return _quantile(x, 0.75) - _quantile(x, 0.25)
 
 
+
+#: Seed for the paired bootstraps below. Shared with stats.py's BOOTSTRAP_SEED
+#: so a CI quoted in the paper reproduces whichever module computed it.
+BOOTSTRAP_SEED = 20260827
+BOOTSTRAP_RESAMPLES = 10_000
+
+
+def _median(x: list[float]) -> float:
+    s = sorted(x)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def bootstrap_two_sample(
+    a: list[float],
+    b: list[float],
+    statistic: str,
+    resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float, float]:
+    """Percentile bootstrap CI for a two-sample statistic of medians.
+
+    `statistic` is "difference" (median(a) - median(b)) or "ratio"
+    (median(a) / median(b)). Both groups are resampled independently, which is
+    the right model here: the cells were collected separately and runs are not
+    paired across them.
+
+    H1 and H2 in section 6.2 each name a CI as their test, and an earlier draft
+    declared both nulls rejected from point estimates alone. This exists so the
+    stated test is actually run. Seeded, so a reviewer recomputes the same
+    interval rather than a similar one.
+
+    Returns (point, lo, hi).
+    """
+    if not a or not b:
+        return (float("nan"), float("nan"), float("nan"))
+    f = (lambda x, y: _median(x) - _median(y)) if statistic == "difference" else (lambda x, y: _median(x) / _median(y))
+    point = f(a, b)
+    # Sort before resampling. A bootstrap draws by INDEX, so the order the
+    # caller happens to hand the sample in changes which element each draw
+    # picks and shifts the interval by a unit or two of Monte Carlo noise -
+    # which meant the same data gave a different CI depending on whether the
+    # caller had sorted rows by submission time. The multiset is what the
+    # statistic is a function of, so canonicalise it here and the interval
+    # becomes a property of the data rather than of the call site.
+    a = sorted(a)
+    b = sorted(b)
+    rng = random.Random(seed)
+    out: list[float] = []
+    na, nb = len(a), len(b)
+    for _ in range(resamples):
+        ra = [a[rng.randrange(na)] for _ in range(na)]
+        rb = [b[rng.randrange(nb)] for _ in range(nb)]
+        out.append(f(ra, rb))
+    out.sort()
+    return (point, out[int(0.025 * resamples)], out[int(0.975 * resamples)])
+
+
 def _selftest() -> int:
     failures = 0
 
@@ -414,6 +472,19 @@ def _selftest() -> int:
     big_b = [float(i) + 100 for i in range(25)]
     r3 = mann_whitney_u(big_a, big_b)
     check("clearly different groups give small p", r3.p < 1e-6, f"p={r3.p:.3g}")
+
+    print("\n=== two-sample bootstrap (the H1 / H2 tests) ===")
+    pt, lo, hi = bootstrap_two_sample([1.0, 2.0, 3.0, 4.0, 5.0], [1.0, 2.0, 3.0, 4.0, 5.0], "difference")
+    check("identical samples: difference CI straddles 0", lo <= 0 <= hi, f"{pt} [{lo}, {hi}]")
+    pt, lo, hi = bootstrap_two_sample([10.0] * 8, [1.0] * 8, "ratio")
+    check("constant 10x ratio gives CI [10, 10]", pt == 10.0 and lo == 10.0 and hi == 10.0, f"{pt} [{lo}, {hi}]")
+    _, lo2, hi2 = bootstrap_two_sample([10.0] * 8, [1.0] * 8, "ratio")
+    check("seeded: a rerun gives an identical interval", (lo, hi) == (lo2, hi2), f"[{lo}, {hi}]")
+    _a = [5.0, 1.0, 4.0, 2.0, 3.0, 9.0, 7.0]
+    _b = [2.0, 8.0, 6.0, 3.0, 1.0, 5.0, 4.0]
+    r1 = bootstrap_two_sample(_a, _b, "difference")
+    r2 = bootstrap_two_sample(list(reversed(_a)), list(reversed(_b)), "difference")
+    check("interval does not depend on input row order", r1 == r2, f"{r1} vs {r2}")
 
     print(f"\n=== {'ALL PASS' if failures == 0 else f'{failures} FAILURES'} ===")
     return failures
