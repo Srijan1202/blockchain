@@ -1,6 +1,9 @@
 # Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups
 
-**Draft — sections 1-6, 9-12 and 14.** Related Work (section 13) is not drafted; citations pending verification.
+**Draft — §§1–11 and 13.** §12 (Related Work) is not drafted; citations pending verification.
+> Section numbering is contiguous: the experiment matrix and metric definitions that stood as
+> separate sections in the research plan are folded into §4, and the results sections were
+> renumbered to close the gap.
 
 > **Provenance rule for this document.** Every quantitative claim carries a bracketed source:
 > `[E2]` the 100-run public-testnet dataset (`data/export.csv`); `[E1]` the controlled devnet
@@ -28,40 +31,37 @@ which we operate the sequencer ourselves and censor a specific transaction — t
 in which the word *censorship* is licensed at all [E1]. Third, a census of mainnet history
 that asks how often the hatch has ever been used [M].
 
-Four findings stand out. **(i) The architectures are asymmetric in kind.** Arbitrum's forced
-path requires two user-initiated L1 transactions and the reconstruction of six event fields
-including an aliased sender; the OP Stack requires one transaction and nothing else, because it
-has no force call to make — an absence that is the finding rather than a gap in our
-implementation [S, E1]. Their costs are billed incomparably: Arbitrum charges 94.8% on L1 and
-the remainder as a separate L2 fee, while an OP deposit prepays execution on L1 and bills once
-[E2]. **(ii) On a healthy chain, Arbitrum's escape hatch is structurally unreachable.** `forceInclusion` acts only on delayed messages the
-sequencer has not yet read, and a healthy sequencer reads them within minutes, hours before
-the 24-hour window opens [P, E2]. The mechanism cannot be rehearsed: a user's first invocation
-is necessarily under adversarial conditions. **(iii) It has never been reachable, let alone invoked.** A full-history census of every
+**The central finding is that the mechanism has never been reachable.** A census of every
 delayed message Arbitrum One has ever received — 2,563,796 of them, index-contiguous — finds
-that **none was ever left unread for the `delayBlocks` window**: the longest lapse in four years
-was 1,250 blocks (~4.2 h) against a window of 7,200, 17.4% of the way to eligibility [M].
-`forceInclusion` has consequently never been called — zero in 1,332,810 batches across the
-contiguous 10,540,270-block history, CI [0, 2.77 × 10⁻⁶] — but that zero is a property of the
-precondition, not of user behaviour, and we say so. The submission leg *has* been exercised:
-357 signed transactions entered through the delayed inbox, in bursts consistent with testing,
-and the sequencer read every one within 24 minutes [M]. **(iv) Two structural properties of Arbitrum's
-delay buffer, established from the deployed source and confirmed on our devnet:** buffer
-depletion is *retroactive*, so BoLD's protection cannot engage during a first censorship
-incident, only a sustained one; and forcing is a *batch* operation whose price is set by how
-many messages are queued ahead of the user — a quantity they can neither observe in advance
-nor control.
+that none was ever left unread for the `delayBlocks` window that `forceInclusion` requires.
+The longest lapse in roughly four years of operation was 1,250 L1 blocks (~4.2 h) against a
+window of 7,200: 17.4% of the way to eligibility [M]. `forceInclusion` has consequently never
+been successfully called — zero in 1,332,810 batches across the contiguous 10,540,270-block
+history — but that zero is a fact about the precondition, not about what users would do. The
+submission leg *has* been exercised: 357 signed transactions entered through the delayed inbox,
+in bursts consistent with testing, every one read by the sequencer within 24 minutes [M].
+
+Three further results follow from the deployed contracts rather than from any one environment.
+The two conditions `forceInclusion` requires are **mutually exclusive on a healthy chain**, so
+the path is closed precisely when the system is working, and cannot be rehearsed on it [S, E2].
+Delay-buffer depletion is **retroactive**, so BoLD's protection cannot engage during a first
+censorship incident, only a sustained one [S, E1]. And forcing is a **batch operation** whose
+price is set by how many messages are queued ahead of the user — a quantity they can neither
+observe in advance nor control [S, E1]. The architectures also differ in kind rather than
+degree: Arbitrum's forced path needs two user-initiated L1 transactions and an aliased-address
+reconstruction, the OP Stack's needs one and no force call at all, and the two cost structures
+are not commensurable — Arbitrum bills 94.8% on L1 and the rest as a separate L2 fee, an OP
+deposit prepays execution on L1 and bills once [E2].
 
 On the public testnets, the time from a message's L1 inclusion to its appearance on L2 differed
 by an order of magnitude between the two chains — median 766 s on Arbitrum Sepolia against 76 s
-on OP Sepolia, n = 25 per cell [E2]. Every Arbitrum run was auto-included, so that figure is a
-measurement of the **Arbitrum Sepolia sequencer's delayed-inbox read cadence**, an operator
-configuration, and not of the protocol; it is reported as such and does not transfer to
-mainnet.
+on OP Sepolia, n = 25 per cell [E2]. Every Arbitrum run was auto-included, so that figure
+measures the **Arbitrum Sepolia sequencer's delayed-inbox read cadence**, an operator
+configuration, and not the protocol; it is reported as such and does not transfer to mainnet.
 
 We release the harness, the dataset, and a reproducible devnet censorship protocol. Prior work
 designs these mechanisms, formally models them, flags the usability gap, or attacks the path.
-To our knowledge this is the first work to measure what using it costs.
+To our knowledge this is the first work to measure whether invoking it has ever been possible.
 
 ---
 
@@ -94,11 +94,14 @@ separate L1 transactions, a 24-hour wait, correct reconstruction of six event fi
 knowledge that the function even exists is not equivalent to one that happens automatically,
 even though both are marked present.
 
-We therefore treat censorship resistance as a *cost*, and measure it along four dimensions:
-**latency** (how long), **fees** (how much), **waiting** (how much of the latency is a
-protocol-mandated delay rather than work), and **manual steps** (how many user-initiated L1
-transactions, and what the user must know). These map onto the metric families used
-throughout: M-L\* latency, M-C\* cost, M-R\* reliability, M-U\* user action.
+We therefore treat censorship resistance as a *cost*, and measure it along the four dimensions
+formalised in §4.1: **latency** (how long), **fees** (how much), **manual steps** (how many
+user-initiated L1 transactions, and what the user must know), and **reliability** (how often an
+attempt succeeds, with failures kept in the denominator). Latency decomposes further into work
+and protocol-mandated *waiting*, and the stage model of §4.2 separates them — on Arbitrum the
+waiting dominates by three orders of magnitude, and §7.5 gives it a number. These map onto the
+metric families used throughout: M-L\* latency, M-C\* cost, M-R\* reliability, M-U\* user
+action.
 
 ### 2.3 Why this is hard to measure honestly
 
@@ -129,23 +132,40 @@ construction* and say so.
 
 ### 2.4 Contributions
 
-1. **An empirical characterisation of what invoking L2 censorship resistance costs**, across
-   two protocol families, on public testnets [E2] and under real, operator-induced censorship
-   on a controlled devnet [E1].
-2. **The architectural asymmetry, quantified**: required user action differs structurally (two
-   L1 transactions versus one) and the cost structures are incomparable (two-leg versus prepaid)
-   [E2, E1]. The testnet latency gap is reported alongside as a measurement of sequencer
-   configuration, not of protocol.
-3. **A structural reachability result**: on a healthy chain Arbitrum's hatch cannot be
-   exercised at all, because the two conditions it requires — delay elapsed, and message still
-   unread — cannot hold simultaneously [P, E2].
-4. **Two previously unstated properties of Arbitrum's delay buffer** — retroactive depletion,
-   and batch-priced forcing — derived from the deployed contract source and confirmed on the
-   devnet [S, E1].
-5. **An honest mainnet usage census** [M], including the possibility, which we find, that the
-   answer is "never observed".
-6. **A reproducible harness, dataset, and devnet censorship protocol**, so the measurement can
-   be repeated on other rollups rather than re-argued.
+Ordered by strength, and pruned to what survives §10. An earlier version of this list had six
+entries, two of which §10 conceded away; this one is shorter on purpose.
+
+1. **Arbitrum One's escape hatch has never been reachable.** A census of every delayed message
+   the chain has received — 2,563,796, index-contiguous, paired with every batch that read
+   them — finds that none was ever left unread for the `delayBlocks` window. The longest lapse
+   in roughly four years reached 17.4% of it [M]. `forceInclusion` has consequently never been
+   called, and that zero is a property of the precondition rather than of user behaviour. We
+   know of no prior measurement of this quantity, and it is the fact from which most of the
+   paper's other claims follow.
+
+2. **Three properties of the deployed mechanism that explain and bound the guarantee.** Each is
+   verified against the implementation actually running, not against documentation, and each
+   has a consequence a specification reader would not anticipate: the two conditions
+   `forceInclusion` requires are *mutually exclusive on a healthy chain*, so the path closes
+   exactly when the system is behaving [S, P, E2]; delay-buffer depletion is *retroactive*, so
+   BoLD cannot engage during a first censorship incident [S, E1]; and forcing is *batch-priced*,
+   so the cost of recourse is set by a queue depth the user can neither observe nor control
+   [S, E1]. We do not claim these are undocumented — §13 is not yet written, and that claim
+   would need it — only that they are verified here and their consequences drawn out.
+
+3. **The architectural asymmetry, in what a user must do and what they are billed.** Arbitrum's
+   forced path requires two user-initiated L1 transactions and the reconstruction of six event
+   fields including an aliased sender; the OP Stack requires one and nothing else [S, E1]. The
+   two cost structures are not commensurable: Arbitrum bills 94.8% on L1 and the remainder as a
+   separate L2 fee, an OP deposit prepays execution on L1 and bills once, so a comparison of
+   totals alone misleads about which is cheaper for a user [E2].
+
+4. **A reproducible apparatus, and a discipline for measuring rare events.** A devnet protocol
+   that induces genuine censorship and recovers from it — which gives an existence proof that
+   the mechanism works, on **n = 1** and at parameters no production chain runs (§10.2), and
+   not a characterisation of cost. Alongside it: the released harness and dataset (§9), and
+   the instrument-verification practice of §8.8, grounded in seven measurement errors that
+   arose here and each of which would have biased the result toward this paper's conclusion.
 
 ---
 
@@ -260,6 +280,7 @@ source, and a confidence:
 | S8 | L2 execution | l2_block |
 | S9 | L1 finality | l1_block |
 
+**Table 1.** The stage model. S5 is the only inferred stage; S6 exists only for Arbitrum, and is absent from the OP Stack by construction rather than unobserved.
 S5 is the only inferred stage: it is a *computed* eligibility time, not an observation of a
 block that carried anything. S6 exists only for Arbitrum. On the OP Stack S5 and S6 are absent
 by construction, and their absence is data.
@@ -279,6 +300,7 @@ confidently wrong latencies:
 | `l1_block` | ~12 s, proposer-set | L1 inclusion ordering |
 | `l2_block` | 2 s (OP) / ~250 ms (Arbitrum) | L2 appearance ordering |
 
+**Table 2.** The three clocks. No latency is reported at finer precision than the coarsest clock it spans, and every metric carries a mixed-clock flag and a resolution column.
 Every recorded observation stores its clock source. Any metric spanning two clocks is exported
 with a mixed-clock flag and a resolution column, and precision is never reported finer than
 the coarsest clock involved. We validate the whole dataset against the one relation that
@@ -295,6 +317,7 @@ and report the result as a validity check rather than assuming it.
 | Supports M-L5 | yes | no | no |
 | Supports usage census | no | no | yes |
 
+**Table 3.** What each environment can support. No single environment answers the research question, which is why all three are present.
 Only E1 can demonstrate censorship. Only E3 can say how often the mechanism is used. E2
 supplies the controlled cross-protocol comparison. No single environment answers the question,
 which is why all three are present.
@@ -424,16 +447,12 @@ analytical derivation from live parameters.
 Falsified if devnet recovery exceeds the derived bound, or if the buffer does not decrement as
 documented.
 
-**A note on H5's status, stated here rather than deferred to Results.** Our reading of the
-deployed source, confirmed on the devnet, shows that buffer depletion is *retroactive*: the
-buffer is written only when a batch reading new delayed messages is posted, or by
-`forceInclusion` itself, so a censorship round depletes the buffer for the *next* round rather
-than its own [S, E1]. H5 as originally posed is therefore not testable with a single
-censorship incident, and our E1 run is a single incident (**n=1**). We report the structural
-result — that BoLD cannot engage during a first incident — as a finding in its own right,
-because it follows from control flow alone and holds whether or not the inversion is ever
-demonstrated empirically. Testing H5 as stated requires a multi-round depletion curve, which
-we identify as future work rather than claim.
+**A note on H5's status, stated here rather than deferred to Results.** Buffer depletion turns
+out to be *retroactive* — a censorship round depletes the buffer for the *next* round, never its
+own. §9.5 gives the control-flow argument. The consequence for this hypothesis is that H5 as
+posed is not testable with a single censorship incident, and our E1 run is a single incident
+(**n = 1**). Testing it requires a multi-round depletion curve, which we identify as future work
+rather than claim.
 
 ### 6.3 What would falsify the paper's framing
 
@@ -444,13 +463,13 @@ construction.
 
 ---
 
-## 9. Results
+## 7. Results
 
 All E2 figures below are computed from `data/export.csv` (100 runs, four cells of n = 25). All
 E1 figures come from a single controlled censorship run and are marked accordingly. Where a
 statistic is a median of per-run values rather than a ratio of medians, the text says which.
 
-### 9.1 Coverage and reliability
+### 7.1 Coverage and reliability
 
 Every cell is complete: 25 runs, 25 successes, no timeouts and no incomplete lifecycles, so
 `n_used = n_total` throughout and no denominator silently shrinks [E2].
@@ -462,14 +481,15 @@ Every cell is complete: 25 runs, 25 successes, no timeouts and no incomplete lif
 | op-sepolia / forced | 25 | 25 | [0.863, 1.000] |
 | op-sepolia / normal | 25 | 25 | [0.863, 1.000] |
 
+**Table 4.** Coverage and reliability per cell [E2]. A perfect 25/25 is consistent with a true success rate as low as 86%, which is why the interval is reported rather than the rate.
 The lower bound of 0.863 at 25/25 is worth stating plainly: a perfect success rate over 25
 attempts is consistent with a true success rate as low as 86%. M-R1 is *not* "100% reliable".
 
-### 9.2 RQ1 / H1 — inclusion cadence differs by an order of magnitude, and what that measures
+### 7.2 RQ1 / H1 — inclusion cadence differs by an order of magnitude, and what that measures
 
 **M-L2** (S3 to S7, L1 inclusion to L2 appearance) is the one metric both families genuinely
 share, and it is the basis of the cross-protocol comparison [E2]. Before the numbers, what they
-are a measurement *of*. Every one of the 25 Arbitrum forced runs was auto-included (§9.5): the
+are a measurement *of*. Every one of the 25 Arbitrum forced runs was auto-included (§7.5): the
 sequencer read the delayed inbox voluntarily, minutes after L1 inclusion and a day before any
 force became possible. M-L2 on Arbitrum is therefore **the interval at which the Arbitrum
 Sepolia sequencer polls and batches its delayed inbox** — an operator configuration, with no
@@ -484,25 +504,43 @@ forced paths, because on Arbitrum the forced path was never entered.
 | arb-sepolia / forced | **766 s** | 411 s | 786 s |
 | op-sepolia / forced | **76 s** | 70 s | 90 s |
 
+**Table 5.** M-L2 (L1 inclusion to L2 appearance) on the forced path [E2]. On Arbitrum this measures the sequencer's delayed-inbox read cadence, not a forced-path latency — see the text above and §10.1.
 Mann–Whitney U = 625, z = 6.069, **p = 1.29 × 10⁻⁹**, two-sided, n = 25 per group. U = 625 is
 the maximum possible for 25 × 25: *every* Arbitrum observation exceeds *every* OP Stack
-observation, so the common-language effect size P(A > B) = 1.000. **H1's null is rejected** —
+observation, so the common-language effect size P(A > B) = 1.000. H1 also specifies a bootstrap
+CI on the median difference, which we report rather than treating the point estimate as
+sufficient: the difference of medians is **690 s, 95% CI [685, 695]** (10,000 percentile
+resamples, seed 20260827, groups resampled independently) [E2]. The interval excludes zero by
+two orders of magnitude. **H1's null is rejected** —
 with the caveat that H1 was posed about forced-path latency and what E2 could measure was
 auto-inclusion cadence, so the rejection is of "the two sequencers include delayed messages at
 the same rate", which is not the question H1 asked. We record it as answered on the quantity we
 have and unanswered on the quantity we wanted.
 
+![Per-cell ECDF of M-L2.](../analysis/figures/ecdf_M_L2.png)
+
+**Figure 2.** Per-cell empirical CDF of M-L2 (L1 inclusion to L2 appearance) on the forced
+path. The two distributions do not overlap at any quantile, which is what U = 625 reports as a
+single number. Caption metadata — mixed-clock flag and resolution — is generated with the
+figure.
+
 End-to-end (**M-L3**, S2 to S7) the ordering is unchanged: 775 s median on Arbitrum (426-795)
-versus 87 s on the OP Stack (80-105). The entry leg is not the differentiator — **M-L1**
+versus 87 s on the OP Stack (80-105) (Figure 3). The entry leg is not the differentiator — **M-L1**
 (S2 to S3, submission to L1 inclusion) is 8 s median on Arbitrum and 11 s on the OP Stack, so
 both are simply waiting for an L1 block.
+
+![Per-cell ECDF of M-L3.](../analysis/figures/ecdf_M_L3.png)
+
+**Figure 3.** Per-cell empirical CDF of M-L3 (submission to L2 appearance), the end-to-end
+forced-path measure. We do not plot M-L1 or M-L4: both sit at or below their clock's
+resolution (§10.4), and an ECDF of a quantised value renders its granularity as curve shape.
 
 The normal path inverts the ranking and compresses the scale: **M-L4** medians are 1 s on
 Arbitrum (min 1, max 2) and 3 s on the OP Stack (min 2, max 4) — Arbitrum's ~250 ms blocks
 against the OP Stack's 2 s. At these magnitudes the values sit at or below the `l2_block`
 resolution, and we do not read a difference into them.
 
-### 9.3 RQ2 / H2 — cost, and why the totals must not be compared naively
+### 7.3 RQ2 / H2 — cost, and why the totals must not be compared naively
 
 Median `total_fee_wei`, the only cross-protocol comparable cost figure [E2]:
 
@@ -513,11 +551,20 @@ Median `total_fee_wei`, the only cross-protocol comparable cost figure [E2]:
 | op-sepolia / forced | 130,740,305,035,700 | **3,351.8x** |
 | op-sepolia / normal | 39,006,186,877 | — |
 
-**H2's null is rejected on both chains**, and the magnitude of the OP Stack's premium deserves
-attention: the forced path costs over three thousand times the normal path, not because
+**Table 6.** Median `total_fee_wei` per cell and the forced-path premium [E2]. `total_fee_wei` is the only cross-protocol comparable cost column.
+H2 specifies a bootstrap CI on the ratio of medians. Arbitrum **19.2×, 95% CI [18.3, 20.3]**;
+OP Sepolia **3,351.8×, 95% CI [3,321.3, 3,411.7]** (same procedure and seed) [E2]. Neither
+interval contains 1, so **H2's null is rejected on both chains**. The magnitude of the OP
+Stack's premium deserves attention: the forced path costs over three thousand times the normal path, not because
 forcing is expensive in absolute terms — it is within 25% of Arbitrum's — but because the OP
 Stack's *normal* path is extraordinarily cheap. A premium is a ratio, and a large ratio here
 is a statement about the denominator.
+
+![Median total_fee_wei per cell with bootstrap CIs.](../analysis/figures/cost_comparison.png)
+
+**Figure 4.** Median `total_fee_wei` per cell with bootstrap confidence intervals. The caption
+generated with the figure states that `total_fee_wei` is the only cross-protocol comparable
+cost column and why — see §7.3 and the data dictionary.
 
 **The decomposition is the centrepiece, because the two totals are composed incomparably.**
 Per-run component shares of `total_fee_wei`, medians with ranges [E2]:
@@ -527,14 +574,22 @@ Per-run component shares of `total_fee_wei`, medians with ranges [E2]:
 | arb-sepolia / forced | **94.8%** (94.1-95.9) | 5.2% (4.1-5.9) |
 | op-sepolia / forced | **100%** — all 25 runs | **none — no L2 leg exists** |
 
+**Table 7.** Forced-path cost composition, per-run medians with ranges [E2]. The OP Stack has no L2 leg on this path: a deposit prepays its execution on L1.
+![Forced-path cost decomposition by component.](../analysis/figures/cost_decomposition.png)
+
+**Figure 5.** Forced-path cost decomposition. Components are shown *within* each protocol only:
+`M_C3_op_l1_data_fee_wei` and `M_C3_arb_l1_gas_allocation` are different quantities in
+different units at different prices and are never placed side by side.
+
 On the OP Stack's forced path `M_C1` equals `total_fee_wei` exactly, in all 25 runs. This is
 not a gap in instrumentation: a deposit's L2 execution is prepaid on L1 as part of the deposit
 itself, so there is no separate L2 fee to charge. Arbitrum's forced path, by contrast, has a
 genuine two-leg structure — the L1 `sendL2Message` call dominates at 94.8%, and the L2
 transaction it carries is charged separately.
 
-So the headline totals (105.4 versus 130.7 trillion wei) look like a modest 24% difference
-between comparable quantities, and they are not comparable quantities: one is a single L1
+So the headline totals (105.4 versus 130.7 trillion wei) look like a modest difference between
+comparable quantities — Arbitrum **19% cheaper**, taking the OP Stack figure as the base — and
+they are not comparable quantities: one is a single L1
 payment, the other is an L1 payment plus a separately charged L2 execution. Reporting the
 totals without the decomposition would invite exactly the wrong inference.
 
@@ -546,7 +601,7 @@ data-availability cost is not a separable fee at all: it is recouped as extra L2
 only figure that survives the comparison. Carrying the OP data fee explicitly also matters
 practically: omitting it understates the true OP normal-path cost by about 46%.
 
-### 9.4 RQ4 / H4 — required user action is structural, not incidental
+### 7.4 RQ4 / H4 — required user action is structural, not incidental
 
 **M-U1**, counted from what was actually sent rather than from protocol design [E2]:
 
@@ -556,8 +611,9 @@ practically: omitting it understates the true OP normal-path cost by about 46%.
 | op-sepolia / forced | 1, in all 25 runs |
 | both normal cells | 0, in all 25 runs |
 
+**Table 8.** M-U1, user-initiated L1 transactions, counted from what was sent [E2]. Arbitrum's protocol requires two; the second was never needed because every run was auto-included.
 Arbitrum's forced path *requires* two user-initiated L1 transactions, yet we measured one in
-every run. The reason is §9.5: the sequencer voluntarily consumed every message, so the second
+every run. The reason is §7.5: the sequencer voluntarily consumed every message, so the second
 transaction was never needed and never sent. The protocol's requirement of two was exercised
 exactly once, on the devnet, where M-U1 = 2 (**n = 1**) [E1].
 
@@ -566,7 +622,7 @@ the weaker, cleaner statement: on a healthy chain the *observable* action counts
 one, and the architectural difference is invisible in the telemetry precisely when the system
 is behaving. The difference appears only under the conditions the mechanism exists for.
 
-### 9.5 RQ5 — on a healthy chain, Arbitrum's forced path is unreachable
+### 7.5 RQ5 — on a healthy chain, Arbitrum's forced path is unreachable
 
 Every one of the 25 Arbitrum forced runs was auto-included: `inclusion_path = auto`, 25/25,
 and **S6 (force action) has zero rows**, 0/25 [E2]. S3, S4, S5 and S7 are populated in all 25.
@@ -583,7 +639,7 @@ hatch is only exercisable while the failure it protects against is actually occu
 cannot be rehearsed; and a user's first invocation is necessarily under adversarial
 conditions, with no prior opportunity to build confidence in it.
 
-### 9.6 E1 — censorship, and the only M-L5 we have
+### 7.6 E1 — censorship, and the only M-L5 we have
 
 We operated the sequencer, shortened `delayBlocks` to 60 via the UpgradeExecutor, disabled the
 delayed-message reader, and submitted a transaction through `Inbox.sendL2Message` only. **All
@@ -603,20 +659,30 @@ concurrently, which is what distinguishes censorship from a halt.
 | M-C3 L2 execution | 21,000 gas, 2,100,000,000,000 wei |
 | total | 309,661,501,435,287 wei |
 
+**Table 9.** The single devnet censorship run [E1]. Every figure here rests on one observation, at parameters no production chain uses (§10.2).
 After `forceInclusion` the transaction executed and the recipient's balance moved by exactly
 the signed amount.
+
+**RQ5 asks whether recovery happened within the protocol-stated bound, and it did, though the
+bound is weaker than the phrase suggests.** With `delayBlocks` set to 60, the protocol permitted
+forcing from block 60 after the message's L1 inclusion; we forced at block 92 and the
+transaction appeared immediately after. The protocol's guarantee is a *lower* bound on when
+recourse becomes available, not an upper bound on when it completes — nothing in the contract
+obliges anyone to call `forceInclusion` promptly, or at all, since the call is permissionless
+and unincentivised. The 32-block gap between eligibility and our call is our own latency in
+noticing and submitting, and on a production chain it would be whatever the user's tooling and
+attention allow. So the honest reading of RQ5 is: the mechanism recovered the transaction, the
+protocol-stated delay elapsed exactly as specified, and the time from *eligibility* to
+*recovery* is a property of the user, not of the protocol (**n = 1**).
 
 Two structural properties were confirmed here, and both generalise beyond n = 1 because they
 follow from the deployed contract's control flow rather than from the measurement [S]:
 
-**Buffer depletion is retroactive.** `DelayBuffer.update()` is called only from a batch post
-that reads new delayed messages, or from `forceInclusion` itself. During a censorship window
-neither runs, so the stored buffer does not move — and the live view actually *replenishes*,
-because the delay term it derives describes the *previous* message while elapsed time grows.
-Our run confirms it: `bufferBlocks` stayed at 14,400 throughout. **A censorship round depletes
-the buffer for the next round, never its own, so BoLD cannot engage during a first incident.**
-This is why H5 as posed is untestable with one incident, and we report the structural result
-instead of the inversion.
+**Buffer depletion is retroactive**, so a censorship round depletes the buffer for the *next*
+round and BoLD cannot engage during a first incident. The run confirms the mechanism rather
+than establishing it: `bufferBlocks` stayed at 14,400 throughout. §9.5 gives the control-flow
+argument and its consequences; the reason H5 is untestable with a single incident follows from
+it.
 
 **Forcing is a batch operation.** The call moved `totalDelayedMessagesRead` from 102 to 107:
 **one forcing user, five messages included** (n = 1). `forceInclusion` takes a count to read
@@ -626,7 +692,7 @@ runs without its batch size. The price of the escape hatch is set by queue depth
 neither observe in advance nor control — and any party can enqueue delayed messages at
 ordinary L1 cost.
 
-### 9.7 Validity checks
+### 7.7 Validity checks
 
 These bear directly on whether the latency numbers above can be believed, so we report them as
 results rather than as an appendix.
@@ -644,7 +710,7 @@ without its flag and resolution.
 
 **The same failure does not appear in the E2 dataset.** We tested every run for it: each
 observed L1-anchored stage (S3, S4) against each L2-anchored stage (S7, S8). **Zero violations
-across 200 compared pairs.** S5 is excluded because it is inferred and, per §9.5, legitimately
+across 200 compared pairs.** S5 is excluded because it is inferred and, per §7.5, legitimately
 falls *after* L2 appearance; S9 is excluded because L1 finality legitimately follows it.
 Including either would have manufactured false positives.
 
@@ -662,7 +728,7 @@ sharing one timestamp — is absent.
 
 ---
 
-## 10. Mainnet Observations
+## 8. Mainnet Observations
 
 Read-only classification of mainnet history per §4.5. Every range is recorded with its scan,
 every row carries its evidence string, and no class is ever upgraded to improve a count.
@@ -673,9 +739,9 @@ no message had ever gone unread past `delayBlocks`, zero forced inclusions would
 arithmetically guaranteed and the count would say nothing about behaviour — could not be
 answered from that sample. It is answered here from the full history, and the answer changes
 what the headline means. It also overturned two claims the sample had supported; both are
-recorded in §10.8.
+recorded in §8.8.
 
-### 10.1 The precondition has never held: a full-history read-delay census
+### 8.1 The precondition has never held: a full-history read-delay census
 
 `forceInclusion` requires that a delayed message remain unread for `delayBlocks` L1 blocks.
 Whether that has ever happened is a question about every message the inbox has ever received,
@@ -707,6 +773,7 @@ it makes eligibility *easier* to reach.
 | p99.99 | 817 | 2.7 h |
 | **max** | **1,250** | **4.2 h** |
 
+**Table 10.** Read-delay distribution over every delayed message in Nitro-era history [M]. Single clock (`l1_block`); the durations are a reading aid, and every comparison in the text is in blocks.
 **Reachability.** Messages that exceeded the `delayBlocks` in force at their height:
 **0 of 2,563,796** — 0 of 1,870,291 under `delayBlocks = 5,760` and 0 of 693,505 under
 7,200 [M]. The closest any message ever came was **17.4% of the window**: message 2,270,298, a
@@ -724,13 +791,22 @@ largest, by how close they came [M]:
 | 2022-11-05 | 201 | 577 blocks (~1.9 h) | 0.100 of 5,760 |
 | 2024-06-11 | 1,072 | 539 blocks (~1.8 h) | 0.094 of 5,760 |
 
+**Table 11.** The five incidents that came closest to opening the force window [M]. Dates are estimated from block height at 12 s/block and are approximate to within a day or two.
 Dates are estimated from block height at 12 s/block from a measured anchor and are
 approximate to within a day or two. Every incident ended inside a fifth of the window.
+
+![Read delay against the force window, all of Nitro-era history.](../analysis/figures/read_delay_cdf.png)
+
+**Figure 1.** Cumulative distribution of read delay for every delayed message in Nitro-era
+history (n = 2,563,796, index-contiguous). Log x-axis, because on a linear one the whole
+distribution collapses against the axis and the gap the figure exists to show disappears. The
+dashed lines are the two `delayBlocks` values in force over the period; the dotted line is the
+largest delay ever observed. Single clock (`l1_block`), so no mixed-clock caveat applies.
 
 **Verdict.** In roughly four years of operation, across every message the delayed inbox has
 carried, `forceInclusion`'s precondition has **never once been satisfied**. The mechanism was
 not unused; it was unreachable. Zero calls follows from that arithmetically, and the Class A
-census in §10.2 is therefore a measurement of the precondition's absence, not of anyone's
+census in §8.2 is therefore a measurement of the precondition's absence, not of anyone's
 willingness to use the hatch.
 
 That is a different finding from the one an earlier draft made, and a sharper one. It says
@@ -738,7 +814,7 @@ nothing about what users would do if the window opened — nobody has ever had t
 it says a great deal about the sequencer: the longest it has ever left a message unread is 4.2
 hours against a 24-hour bound, with the two largest lapses roughly two years apart.
 
-### 10.2 Class A: zero, confirmed two ways, and what the zero bounds
+### 8.2 Class A: zero, confirmed two ways, and what the zero bounds
 
 **`forceInclusion` has never been successfully called on Arbitrum One.** Zero confirmed forced
 inclusions in **1,332,810 batches** over a contiguous 10,540,270 L1 blocks, from the
@@ -746,10 +822,10 @@ SequencerInbox proxy's first block with code (15,411,056) to chain head at censu
 (25,951,325), with no unexamined gaps. Exact Clopper–Pearson 95% CI on the rate:
 **[0, 2.77 × 10⁻⁶]** [M].
 
-Given §10.1, this is not a surprise, and the interval should be read accordingly: it bounds a
+Given §8.1, this is not a surprise, and the interval should be read accordingly: it bounds a
 rate that is zero by construction, because the event's precondition never occurred. We keep it
 because it is what the census measured, and because it is the answer to a question a reader
-will ask — but it is corroboration of §10.1, not independent evidence about behaviour.
+will ask — but it is corroboration of §8.1, not independent evidence about behaviour.
 
 The zero is robust to the classifier's strictness. `forceInclusion` is the only operation that
 produces a batch with `dataLocation = NoData`, which is the classifier's first condition and
@@ -765,7 +841,7 @@ located by bisecting the EIP-1967 slot, which found one more than an earlier han
 check had [S, P]. A census pointed at the wrong contract or matching only the current
 implementation's selector would return zero for reasons unrelated to the chain.
 
-### 10.3 What was examined
+### 8.3 What was examined
 
 | Chain | Target | Blocks | Events examined | A | B | C | D |
 |---|---|---|---|---|---|---|---|
@@ -775,18 +851,19 @@ implementation's selector would return zero for reasons unrelated to the chain.
 | OP Mainnet | OptimismPortal | 25,939,045–25,949,044 (10,000) | 362 deposits | 0 | 0 | **362** | 0 |
 | Base | OptimismPortal | 25,939,045–25,949,044 (10,000) | 1,095 deposits | 0 | 0 | **1,095** | 0 |
 
+**Table 12.** What was examined, by chain and target [M]. Only the Arbitrum One SequencerInbox census and the read-delay census are full-history; the OP Stack rows are bounded windows.
 Two Bridge rows appear because they answer different questions with different tooling. The
 bounded scan is the per-event classifier of §4.5, with an evidence string per row; the
-read-delay census is the full-history sweep of §10.1, in which Class B is defined by the same
+read-delay census is the full-history sweep of §8.1, in which Class B is defined by the same
 on-chain threshold; every message was covered by a batch, so it has no Class D. Only the SequencerInbox
 census and the read-delay census are full-history; the OP Stack rows are bounded windows and
 are reported as such.
 
 Every examined event is a stored row in the bounded scans; reaching that took two corrections
-to the row-keeping, both recorded in §10.8. Neither touched the Class A result, whose count
+to the row-keeping, both recorded in §8.8. Neither touched the Class A result, whose count
 and denominator come from `logs_seen` on the raw stream before any row is written.
 
-### 10.4 Class B: the sequencer's lapses, none of them close
+### 8.4 Class B: the sequencer's lapses, none of them close
 
 Class B is a message read later than the window the protocol itself calls expected — the
 inbox's on-chain `buffer().threshold`, **150** L1 blocks on Arbitrum One [P]. Across full
@@ -799,7 +876,7 @@ sequencer falling behind its own expected window. But the largest of them reache
 force window and the median incident far less. Class B on this chain describes a sequencer
 that is occasionally late by an hour or two, never one that is absent for a day.
 
-### 10.5 The escape-hatch submission path: used 357 times, never forced
+### 8.5 The escape-hatch submission path: used 357 times, never forced
 
 Kind 3 (`L2_MSG`) is the delayed-inbox path by which a user submits a signed L2 transaction
 around the sequencer — the first leg of the forced path. An earlier draft reported zero such
@@ -813,7 +890,7 @@ voluntarily by the sequencer**: median read delay 67 blocks (~13 min), maximum 1
 which is 2.1% of the force window. Not one came within an order of magnitude of eligibility.
 
 So the submission leg of the escape hatch *is* exercised, rarely and in clusters, and the
-force leg has never been needed afterwards — which is the pattern §9.5 predicted from the
+force leg has never been needed afterwards — which is the pattern §7.5 predicted from the
 testnet: submit through L1, and a healthy sequencer includes it long before forcing is
 possible.
 
@@ -829,7 +906,7 @@ messages carry a leading `L2MessageType` byte; retryables and deposits begin wit
 byte of a packed `uint256`, usually `0x00`. A byte-prefix classifier cannot distinguish "no
 escape-hatch messages" from "these are not escape-hatch messages at all".
 
-### 10.6 OP Stack deposits: 1,457 events, all Class C by construction
+### 8.6 OP Stack deposits: 1,457 events, all Class C by construction
 
 362 deposit events on OP Mainnet and 1,095 on Base, every one Class C [M]. This is a statement
 about what the data can support, not a finding about usage: `TransactionDeposited` is emitted
@@ -838,16 +915,16 @@ and no field distinguishes them. We therefore report OP deposits as **mechanism 
 never as evidence of censorship. Counting deposit volume as escape-hatch usage would produce a
 large number that means nothing — the confound this classification exists to prevent.
 
-### 10.7 What the mainnet data cannot settle
+### 8.7 What the mainnet data cannot settle
 
-**Whether anyone would use `forceInclusion` if they could.** §10.1 establishes that nobody has
+**Whether anyone would use `forceInclusion` if they could.** §8.1 establishes that nobody has
 ever been in a position to. The zero therefore carries no information about user willingness,
 tooling readiness, or awareness — it is consistent with a mechanism everyone would reach for
 instantly and with one nobody knows exists. The 357 submission-leg uses are the only
 behavioural signal, and they are consistent with testing.
 
 **The batch-size distribution.** With zero Class A events there is no mainnet distribution, so
-the griefing-versus-public-good reading of batch-priced forcing (§9.6) is **not decided**. E1's
+the griefing-versus-public-good reading of batch-priced forcing (§7.6) is **not decided**. E1's
 single observation — five messages for one forcer (**n = 1**), on a devnet we controlled —
 remains the only measurement. The full-history census does bound the relevant quantity: the
 unread backlog at the moment a forcer would have acted is the number of messages delayed past
@@ -855,10 +932,10 @@ the threshold in the same incident, and the largest such cluster held 2,884 mess
 (2023-12-08). A forcer during that incident would have swept, and paid for, all of them.
 
 **Whether the hatch was ever *needed*.** Class A records that the mechanism was *used*, and
-§10.1 records that it could not have been. Neither licenses an inference about necessity, and
+§8.1 records that it could not have been. Neither licenses an inference about necessity, and
 we draw none.
 
-### 10.8 Verifying the instrument, and why these checks exist
+### 8.8 Verifying the instrument, and why these checks exist
 
 A null result is unfalsifiable by construction unless the instrument's failure modes are
 enumerated in advance. "We looked and found nothing" and "our tooling silently returned
@@ -936,19 +1013,19 @@ where a filter cannot remove it.
 **7. A 20,000-block sample generalised to four years of history.** The bounded Bridge scan
 found zero escape-hatch messages and zero Class B events, and an earlier draft reported both as
 properties of the chain — "not one user-submitted escape-hatch message", "Class B: zero". Over
-full history the counts are 357 and 8,548 (§10.4, §10.5). Worse, the sample could not answer
+full history the counts are 357 and 8,548 (§8.4, §8.5). Worse, the sample could not answer
 whether `forceInclusion` had ever been reachable, and the draft's headline implicitly assumed
 it had. This was the one error not caught by a check: it was caught by a referee asking the
 question the sample could not answer, which is a reminder that a positive control tests the
-pipe, not the sampling frame. The full-history census of §10.1 exists because of it, and its
+pipe, not the sampling frame. The full-history census of §8.1 exists because of it, and its
 built-in completeness test — index contiguity, 0 missing of 2,563,796 — is the check that
 should have been there from the start.
 
 Two further checks belong to the same family and are reported with the results they guard.
-The **clock-ordering check** (§9.7) tests the whole E2 dataset against a relation that admits
+The **clock-ordering check** (§7.7) tests the whole E2 dataset against a relation that admits
 no argument — a transaction cannot appear on L2 before the L1 block that carried it — after
 the E1 run produced exactly that impossibility. And the census records **which source produced
-each range**, so the agreement between two independent infrastructures (§10.1) is a property
+each range**, so the agreement between two independent infrastructures (§8.1) is a property
 of the data rather than a claim about it.
 
 The common shape is worth stating for anyone reproducing this. Every one of these failures is
@@ -968,7 +1045,7 @@ control verifies that logs come back and decode to the expected shape. A source 
 *real-looking* logs with a corrupted `dataLocation` word — or that served a complete, correctly
 shaped log stream from which forced-inclusion batches had been omitted upstream — would pass
 every check here and produce the same zero. The control tests that the pipe is connected, not
-that what flows through it is faithful. The defence we have is cross-source agreement (§10.1),
+that what flows through it is faithful. The defence we have is cross-source agreement (§8.1),
 which is the next item's weakness.
 
 **A systematic bias present in both independent sources.** Two infrastructures agreeing rules
@@ -1004,7 +1081,7 @@ would reconcile against itself. Those rest on code review and on the export's pr
 columns, not on an independent check.
 
 None of these gaps changes the headline, and the reason is now a measurement rather than an
-argument: §10.1 establishes independently of the Class A census that the precondition never
+argument: §8.1 establishes independently of the Class A census that the precondition never
 held, from a message stream whose completeness is checked by index contiguity rather than by a
 positive control. A hidden forced inclusion would require a hidden eligible message, and the
 read-delay census leaves no room for one. The residual conditionality is on the two streams
@@ -1013,14 +1090,14 @@ say it was.
 
 ---
 
-## 11. Discussion
+## 9. Discussion
 
-### 11.1 A guarantee validated by specification, never by use
+### 9.1 A guarantee validated by specification, never by use
 
 The strongest single fact in this paper is that a mechanism has never once been reachable.
 `forceInclusion` has never been successfully called on Arbitrum One — not once in 1,332,810
 batches across the contiguous 10,540,270-block history [M] — and the full-history read-delay
-census of §10.1 says why: in roughly four years, no delayed message was ever left unread for
+census of §8.1 says why: in roughly four years, no delayed message was ever left unread for
 the window, and the closest lapse was 17.4% of it. Every security argument for the chain —
 including the reasoning by which a centralised sequencer is deemed acceptable — rests on a
 mechanism with **no operational track record whatsoever**, and the reason is not that users
@@ -1044,7 +1121,7 @@ silently, and we have a first-hand example from this project. Our own harness ca
 `forceInclude`, a function that does not exist; the real name is `forceInclusion`, and the two
 produce different four-byte selectors. The call would have hit the proxy fallback and reverted
 with no data. The bug survived a working implementation, a code review and a 100-run testnet
-campaign, because **the code path is unreachable on a healthy chain** (§9.5) and so was never
+campaign, because **the code path is unreachable on a healthy chain** (§7.5) and so was never
 executed. We found it by reading the deployed source, not by running anything. We are not
 suggesting Arbitrum's contract carries an equivalent fault — it is verified and
 widely read — but the episode illustrates the general property: the only moment a
@@ -1057,22 +1134,23 @@ event including an **aliased** sender address (§3.2), and send a second L1 tran
 in the normal operation of the chain teaches any of this, and no wallet we are aware of exposes
 it.
 
-### 11.2 The hatch is only reachable while the failure is happening
+### 9.2 The hatch is only reachable while the failure is happening
 
 Arbitrum's escape hatch requires two conditions to hold at once: the delay must have elapsed,
-and the message must still be unread. On a healthy chain they are mutually exclusive. Our
-messages reached L2 a median of **23.79 hours before** they became force-eligible, and all 25
-forced runs were auto-included with zero force actions recorded [E2].
+and the message must still be unread. On a healthy chain they are mutually exclusive — §7.5
+measures the gap on the testnet (messages reaching L2 roughly a day before eligibility, 25/25
+auto-included) and §8.1 confirms it on mainnet at the scale of every message the chain has
+received.
 
 The practical consequence is that **the mechanism cannot be rehearsed on the live chain even
 by someone who wants to**. A user cannot test their escape-hatch tooling there, because a
 healthy sequencer will consume the message first and there will be nothing left to force.
 There is no staging path, no dry run, and no way to build confidence in advance. The 357
-submission-leg messages in mainnet history (§10.5) look like exactly such attempts — bursty,
+submission-leg messages in mainnet history (§8.5) look like exactly such attempts — bursty,
 clustered, and every one consumed by the sequencer within 24 minutes — and none of them could
 have proceeded to the force leg however much their sender wanted them to.
 
-This also explains the mainnet zero mechanically rather than statistically, and §10.1 now
+This also explains the mainnet zero mechanically rather than statistically, and §8.1 now
 supplies the measurement rather than the argument: the count is not near-zero because users are
 indifferent, it is zero because the path has been closed for the entire operational history of
 the chain. The incidents that came closest — a four-hour lapse in December 2025, a three-hour
@@ -1084,12 +1162,12 @@ evidence for the latter. We think this is the paper's most transferable observat
 property worth auditing is not the presence of a forced-inclusion function but the conditions
 under which a user can actually reach it.
 
-### 11.3 Cost structures that a single total conceals
+### 9.3 Cost structures that a single total conceals
 
 Comparing the two protocols by total fee gives the wrong answer for the wrong reason. Median
 `total_fee_wei` on the forced path is 105,448,477,855,536 on Arbitrum Sepolia against
 130,740,305,035,700 on OP Sepolia [E2] — so a raw comparison says Arbitrum is about 19%
-cheaper. The decomposition says the two numbers are not the same kind of quantity.
+cheaper, taking the OP Stack total as the base. The decomposition says the two numbers are not the same kind of quantity.
 
 Arbitrum charges in two places: the L1 `sendL2Message` call is **94.8%** of the total (per-run
 median, range 94.1–95.9) and the L2 transaction it carries is billed separately at 5.2%. The OP
@@ -1108,7 +1186,7 @@ Both halves matter. Publishing the totals without the decomposition invites the 
 Arbitrum's forced path is cheaper in a way a user would feel, when what the data shows is two
 different billing structures that happen to land at similar magnitudes.
 
-### 11.4 The price of the hatch is set by people who are not the user
+### 9.4 The price of the hatch is set by people who are not the user
 
 `forceInclusion` takes a count of messages to read *up to*, not a message identifier, so a
 caller includes every delayed message queued ahead of their own. On our devnet a single forcing
@@ -1133,7 +1211,7 @@ It also has an immediate methodological implication: `M-C2` is not a per-message
 pooling it across calls without recording how many messages each swept would compare
 incommensurable quantities.
 
-### 11.5 BoLD cannot protect a first incident
+### 9.5 BoLD cannot protect a first incident
 
 Arbitrum's delay buffer shortens the force window under sustained delay, and is cited as
 bounding the worst case. Its depletion is **retroactive**. `DelayBuffer.update()` is reachable
@@ -1160,19 +1238,19 @@ contract.
 
 ---
 
-## 12. Threats to Validity
+## 10. Threats to Validity
 
-### 12.1 Testnet and devnet are not mainnet
+### 10.1 Testnet and devnet are not mainnet
 
 Our controlled measurements were made on public testnets (E2) and a local devnet (E1). Neither
 reproduces mainnet's fee market, congestion, or operational load, and we make no claim that
 they do.
 
 **What does not transfer.** Absolute latencies and absolute fees — and, specifically, the M-L2
-comparison in §9.2, which measures two testnet sequencers' inclusion cadences and would be a
+comparison in §7.2, which measures two testnet sequencers' inclusion cadences and would be a
 different number on any other deployment of the same protocols. Testnet L1 base fees during
 our campaign had a median of 1.07 gwei in the OP Sepolia forced cell [E2], far below typical
-mainnet conditions, so the wei figures in §9.3 characterise a relationship between the two
+mainnet conditions, so the wei figures in §7.3 characterise a relationship between the two
 paths rather than a price a mainnet user would pay. Devnet timings transfer even less: E1 ran
 on a chain with roughly one-second L1 blocks (measured 1.011 s/block across the run) against
 mainnet's twelve [E1].
@@ -1182,9 +1260,9 @@ number of user-initiated L1 transactions, the two-leg versus one-leg cost struct
 mutual exclusivity of the two `forceInclusion` preconditions, the batch semantics of forcing,
 and the retroactive buffer update. These are properties of the deployed contracts, verified
 against the implementations actually in use [S], and they hold wherever those contracts run.
-The mainnet census (§10) is mainnet by construction and carries no environment caveat.
+The mainnet census (§8) is mainnet by construction and carries no environment caveat.
 
-### 12.2 M-L5 rests on a single run, under parameters no production chain uses
+### 10.2 M-L5 rests on a single run, under parameters no production chain uses
 
 M-L5 — the one metric that measures censorship rather than the forced path — has **n = 1**. A
 single observation supports no interval, no variance estimate, and no distributional claim; we
@@ -1197,12 +1275,12 @@ devnet's buffer `threshold` is 600 blocks against Arbitrum One's 150 [P]. Neithe
 a production chain runs, and the 93-second recovery is a function of the parameter we chose,
 not a prediction about mainnet.
 
-The one round also means **H5 was not tested**. Because depletion is retroactive (§11.5), a
-single incident cannot move the buffer, so the worst-case inversion hypothesis remains open.
-Testing it requires a multi-round depletion curve, and we identify that as the clearest piece
-of future work rather than claiming a result we do not have.
+The one round also means **H5 was not tested**: depletion is retroactive (§9.5), so a single
+incident cannot move the buffer and the worst-case inversion hypothesis remains open. Testing it
+requires a multi-round depletion curve, which we identify as future work rather than claiming a
+result we do not have.
 
-### 12.3 The L2 clock trails under load, and the check that caught it has a margin
+### 10.3 The L2 clock trails under load, and the check that caught it has a margin
 
 `l2_block` timestamps are not a reliable wall clock under sequencer backlog. In the E1 run the
 L2 block carrying the forced transaction was stamped **20 s earlier** than the L1 block that
@@ -1211,7 +1289,7 @@ out at 73 s against an L1-only lower bound of 93 s — an impossible value [E1].
 the same sequencer without load showed a 0 s offset, so the effect is load-induced.
 
 We tested the entire E2 dataset for the same failure and found **zero violations across 200
-compared pairs** (§9.7). But a passing check does not certify the clock; it bounds the lag. The
+compared pairs** (§7.7). But a passing check does not certify the clock; it bounds the lag. The
 smallest observed gap between an L1-anchored and an L2-anchored stage is **70 s** (op-sepolia
 forced; the Arbitrum minimum is 411 s) [E2], so the honest statement is not "the E2 clocks were
 correct" but "the L2 clock did not trail by more than 70 s at any E2 observation".
@@ -1225,7 +1303,7 @@ ordering test. We have no evidence such a lag occurred in E2 — no timestamp cl
 violations — but we also have no instrument that would have shown it, and the M-L2 figures
 should be read with that in mind.
 
-### 12.4 Medians are well estimated; tails are not, and the sizing criterion was mis-specified
+### 10.4 Medians are well estimated; tails are not, and the sizing criterion was mis-specified
 
 With n = 25 per cell, our latency medians are supported and our tails are not. We state this
 sharply because it bounds which claims the dataset licenses.
@@ -1251,6 +1329,7 @@ could have met it** [E2]:
 | arb-sepolia / normal | M-L4 | **0.1 s** | 0.25 s | **no** |
 | op-sepolia / normal | M-L4 | **0.3 s** | 2 s | **no** |
 
+**Table 13.** The sample-size criterion against the clock [E2]. In three of four cells the target is finer than the instrument's resolution, so no sample size could have met it.
 This is a specification error, not a sampling shortfall. A half-width below one clock tick
 claims precision the instrument does not have, so the criterion was unsatisfiable by
 construction and reporting it as "met" would have been meaningless.
@@ -1298,6 +1377,7 @@ ten [E2].
 | op-sepolia / forced | M-L3 | −0.079 | 0.705 | 14 | 12.5 | 0.670 | 1.143 | 0.295 | 9.8 → 18.0 |
 | op-sepolia / normal | M-L4 | +0.027 | 0.904 | 4 | 6.5 | 0.199 | 0.047 | 1.000 | 0.2 → 1.0 |
 
+**Table 14.** Exchangeability tests, every cell and metric [E2]. Spearman and Brown–Forsythe p-values are seeded permutation tests; the runs null is enumerated exactly. Bold marks p < 0.05, uncorrected for the 8 × 3 multiplicity — see the text.
 **No cell shows drift or regime change**, including the one that prompted the check — ρ and the
 runs test are uniformly unremarkable. **But dispersion rejects, and only in the Arbitrum forced
 cell, for all three of its latency metrics.** Its spread collapses between the first and second
@@ -1339,7 +1419,7 @@ any temporal effect evenly across cells and turn it into noise instead of struct
 recommend it to anyone repeating this, and record it as a defect of our own design rather than
 a property of the chains.
 
-### 12.5 Every result is a version snapshot
+### 10.5 Every result is a version snapshot
 
 Rollups upgrade, and the parameters we measured are mutable state, not constants.
 
@@ -1355,7 +1435,7 @@ constant: `delayBlocks` was **5,760** from Nitro launch and became **7,200** onl
 upgrade (block 21,830,860), sampled by archive read at every implementation boundary and on a
 250,000-block grid between them [P]. A structural claim verified against one implementation
 does not automatically hold for the others, which is why we checked the force selector against
-all six rather than against the current one (§10.1), and why the read-delay census in §10.4
+all six rather than against the current one (§8.1), and why the read-delay census in §8.4
 compares each message against the `delayBlocks` in force when it was waiting rather than
 against today's value. Claims about
 `delaySeconds` being inert, about batch semantics, and about retroactive depletion are verified
@@ -1363,7 +1443,7 @@ against v3.1.0 and the deployed mainnet implementation; a future upgrade could c
 them, and the harness re-reads every parameter at run time so that a rerun records what was
 true then rather than what we assumed.
 
-### 12.6 What the null result does and does not establish
+### 10.6 What the null result does and does not establish
 
 Zero observed is not zero possible. The exact Clopper–Pearson interval is the honest statement
 of what 0/1,332,810 supports: the true rate is bounded above by **2.77 × 10⁻⁶**, roughly one
@@ -1373,7 +1453,7 @@ consistent with everything reported here.
 Three further limits belong with it:
 
 **We establish that the mechanism was never reachable, not that it would go unused if it
-were.** Class A records invocation; §10.1 records that the precondition for invocation never
+were.** Class A records invocation; §8.1 records that the precondition for invocation never
 held. Neither says anything about what users, wallets or operators would do if a lapse ever
 crossed the window, and the 357 submission-leg messages — the only behavioural signal in the
 history — are consistent with testing rather than with need.
@@ -1388,7 +1468,7 @@ Class C [M]. We can therefore report Arbitrum's escape-hatch usage as zero but c
 corresponding figure for the OP Stack at all — an asymmetry in what the two designs make
 observable, not a difference in what we looked for.
 
-### 12.7 Scope limits of the experimental design
+### 10.7 Scope limits of the experimental design
 
 Three narrowings are worth naming. Our transactions were simple value transfers from a single
 funded account, so we do not characterise how calldata size or contract interaction affects
@@ -1399,7 +1479,54 @@ read as a general claim about L2 censorship resistance beyond Arbitrum Nitro and
 
 ---
 
-## 14. Conclusion
+## 11. Artifact
+
+Contribution 4 is only a contribution if someone else can run it, so this section says what is
+released and what it does and does not let a reader do.
+
+**What ships.** The measurement harness (TypeScript: chain adapters, the lifecycle tracker, the
+mainnet indexer and both censuses), the analysis (Python, standard library only for every exact
+estimator the paper quotes), and the dataset: `bench.sqlite`, `export.csv` and its provenance
+manifest, the full read-delay census streams (2,563,796 messages and 1,335,349 batches, gzipped),
+the `delayBlocks` history, and the single devnet run's recorded state. Digests for all of it are
+in `SHA256SUMS`. A data dictionary documents all 108 export columns and leads with the three
+ways to get a wrong number from correct data — chiefly that `total_fee_wei` is the only
+cross-protocol comparable cost column, and that wei columns overflow float64 silently.
+
+**What a reader can reproduce.** Every statistic and figure in this paper, from the shipped
+files alone, with no chain access, no API key and no funds — including the read-delay census
+verdict, whose two completeness checks (message-index contiguity and batch-sequence contiguity)
+are printed rather than asserted. `REPRODUCE.md` gives the commands with their expected output;
+it was verified by following it literally on a clean clone, which surfaced two failures that
+would have stopped a reader at step two (a native-build step that is unnecessary because the
+dependency ships prebuilt binaries, and a line-ending normalisation that broke every digest on
+Windows). Both were fixed in the repository rather than worked around in prose, and the
+verification log records them.
+
+**What a reader cannot reproduce, and why.** The E2 collection: it ran on Sepolia, whose
+expected end of life is 30 September 2026, so those chains will not exist to re-measure. The E1
+run: it needs a locally operated `nitro-testnode` with the configuration in the appendix, and
+even then a rerun is a second sample rather than a replication, since M-L5 is **n = 1**. The
+mainnet censuses *are* repeatable — `npm run census` and `npm run census-read-delay`, about an
+hour and a half with a free explorer API key — and will return a larger denominator as the
+chain advances. If a forced inclusion ever occurs, the tooling will report it with its batch
+size, and this paper's central claim will be superseded in the way it should be.
+
+**Verification, not just replication.** `analysis/reconcile.py` re-derives every quantitative
+claim in §§1–10 from the dataset and prints claim, section, drafted value, re-derived value and
+whether they agree. It reports 125 claims and 0 mismatches at the time of writing, and it is
+the reason we can state that no number in this paper was written from memory.
+
+---
+
+## 12. Related Work
+
+*Not drafted. Citations are being verified; this section will position the work against the
+design, formal-modelling, usability-flagging and attack literature summarised in §2.1.*
+
+---
+
+## 13. Conclusion
 
 We set out to measure what it costs a user to invoke the escape hatch that every security
 argument for an optimistic rollup depends on. Three measurements answer that: a 100-run
@@ -1417,7 +1544,7 @@ is 1,250 blocks — 17.4% of the 7,200-block window — and every one of the 103
 the sequencer fell behind its own expected threshold ended with the window less than a fifth
 open [M]. The zero is not a fact about users. It is a fact about the precondition.
 
-What makes that more than a curiosity is §9.5. On a healthy chain the mechanism's two
+What makes that more than a curiosity is §7.5. On a healthy chain the mechanism's two
 preconditions — delay elapsed, message still unread — are mutually exclusive, our testnet
 messages reached L2 a median of 23.79 hours *before* they became force-eligible [E2], and the
 mainnet history confirms the pattern at scale. The submission leg has been used: 357 signed
@@ -1426,14 +1553,11 @@ sequencer consumed every one within 24 minutes [M]. The hatch is not unused beca
 indifferent. It has been closed for the entire operational history of the chain.
 
 **A guarantee in this position has been validated the way a specification is validated, not
-the way a running system is.** Nobody has exercised it, nobody can rehearse it, and the first
-execution of the path will happen under adversarial conditions with no prior evidence that the
-surrounding tooling works. We offer our own experience as the cheapest available illustration:
-our harness called a function that does not exist, and the error survived implementation,
-review and a hundred testnet runs because the code path is unreachable while the sequencer
-behaves. We found it by reading deployed source. The contract itself is widely read and we
-allege nothing about it — the point is about the class of defect that unexercised paths
-accumulate, in code and equally in wallets, runbooks and operator familiarity.
+the way a running system is.** Nobody has exercised it, nobody can rehearse it on the live
+chain, and the first execution of the path will happen under adversarial conditions with no
+prior evidence that the surrounding tooling works. §9.1 gives our own harness's wrong-selector
+bug as the cheapest illustration of what unexercised paths accumulate — in code, and equally in
+wallets, runbooks and operator familiarity.
 
 The measurements also show that the two architectures differ in kind rather than degree. One
 requires two L1 transactions and an aliased-address reconstruction; the other requires one and
@@ -1441,7 +1565,7 @@ nothing else, and its absent force call is a finding rather than a gap in our im
 Their costs are not comparable in the way a single total suggests: Arbitrum bills in two
 places, 94.8% on L1 and the rest on L2, while an OP Stack deposit prepays its execution on L1
 and bills once [E2]. A reader comparing totals alone would conclude Arbitrum is about 19%
-cheaper and would have compared two different kinds of quantity. And forcing is batch-priced —
+cheaper (OP Stack total as the base) and would have compared two different kinds of quantity. And forcing is batch-priced —
 one call sweeps every message queued ahead of the caller, five for one user in our single
 devnet observation (**n = 1**) — so the price of recourse is set by a queue depth the user can
 neither see in advance nor control [E1]. Whether that is a griefing surface or a public good
@@ -1474,10 +1598,12 @@ identical output. Every measurement error we found in this project was silent, p
 biased toward the conclusion we were testing — a provider-side filter returning zero for a
 selector we had just observed, an analysis dropping rows from a binomial denominator,
 overlapping ranges narrowing a confidence interval, a uniqueness key collapsing distinct
-events, and parallel fetches discarding events whose block lookup failed under load. None was
-caught by a result looking wrong. Each was caught by a check built to catch it: a positive
-control against a known-present selector, a denominator reconciliation, contiguity and overlap
-detection, and a rule that a scan is not complete unless every examined event became a row.
+events, parallel fetches discarding events whose block lookup failed under load, an output
+filter that hid the warnings about it, and a 20,000-block sample generalised to four years of
+history. Seven in all, enumerated in §8.8. Six were caught by a check built to catch them — a
+positive control against a known-present selector, a denominator reconciliation, contiguity and
+overlap detection, a rule that a scan is not complete unless every examined event became a row.
+The seventh was caught by a referee, and it is the one that changed a conclusion.
 
 Finally, the open questions. **H5 — whether the delay buffer inverts the worst case under
 sustained censorship — is untested**, because buffer depletion is retroactive and a single

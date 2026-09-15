@@ -175,8 +175,12 @@ target is finer than the clock). This is the finding in paper §12.4, not a fail
 ```bash
 python analysis/figures.py --csv data/export.csv --out analysis/figures
 ```
-Writes `ecdf_M_L1.png` … `ecdf_M_L4.png`, `cost_comparison.png`, `cost_decomposition.png`.
-Captions embed the mixed-clock flag and resolution automatically.
+Writes five figures: `ecdf_M_L2.png`, `ecdf_M_L3.png`, `cost_comparison.png`,
+`cost_decomposition.png` and `read_delay_cdf.png`. Captions embed the mixed-clock flag and
+resolution automatically. M-L1 and M-L4 are deliberately not plotted — both sit at or below
+their clock's resolution, so an ECDF would render quantisation as curve shape (paper §10.4).
+`read_delay_cdf.png` additionally needs the read-delay streams; it is skipped with a message if
+they are absent, rather than failing the run.
 
 ### 6.5 The mainnet results
 
@@ -333,9 +337,9 @@ clone was discarded and re-created from the remote before re-testing.
 | §6.2 `drift.py` | OK | — | 3 DISPERSION flags, all arb-sepolia/forced; no DRIFT/REGIME |
 | §6.3 `report.py` | OK | — | M_L2 medians 766 / 76; U = 625 |
 | §6.3 `stability.py` | OK | — | GUARDED + 3 × ILL-POSED |
-| §6.4 `figures.py` | OK | — | 6 figures written |
+| §6.4 `figures.py` | OK | — | 5 figures written |
 | §6.5 `mainnet.py` | OK | — | CONTIGUOUS 15411056..25951325; 0 in 1,332,810; CI [0, 2.768e-06] |
-| §7 `reconcile.py` | OK | — | 91 claims, 0 mismatches (123 after the read-delay census was added) |
+| §7 `reconcile.py` | OK | — | 91 claims, 0 mismatches (133 after the read-delay census and the H1/H2 intervals were added) |
 | §8 `npm run census --dry-run` | OK (with a key) | — | positive control PASSED, 255 logs, all decoded |
 
 The `bench.sqlite` in the clone passed `PRAGMA integrity_check` before and after the
