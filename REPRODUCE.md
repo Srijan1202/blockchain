@@ -373,6 +373,30 @@ IEEEtran's own section numbering is switched off, since the paper numbers its se
 the text and some eighty cross-references depend on those numbers. The paper's caption
 paragraphs are moved inside the float they describe so they travel with it.
 
+Both builds target, and on this machine reach, **zero overfull hboxes**. Two things make that
+possible and are worth knowing if a future edit reintroduces one: a line may break after
+an underscore inside `	exttt` (identifiers such as `M_C3_op_l1_data_fee_wei` are otherwise
+unbreakable boxes), and in the one-column build any table with six or more columns is set
+with `xltabular` — content-sized columns except the one with the longest cell, which
+absorbs the remaining width and wraps.
+
+**The arXiv package.** `scripts/package-arxiv.ps1` writes `arxiv/` — `main.tex`, the five
+figures under `figures/`, `00README.json` selecting xelatex, and a README recording the
+source commit — and then verifies it by copying it to a fresh directory outside the
+repository and building it there with the same checks. arXiv (TeX Live 2025, checked
+September 2026) accepts xelatex and `fontspec`, but only with fonts loaded **by file name**
+from TeX Live's own tree, since it registers almost nothing with fontconfig; and it rejects
+PDFs produced from TeX. So the package is the IEEE document with TeX Gyre Termes and DejaVu
+Sans Mono loaded by file name, which also removes the Windows-font dependency: `arxiv/`
+builds on any TeX Live or MiKTeX install with
+
+```
+xelatex main.tex && xelatex main.tex
+```
+
+`arxiv/` is committed; it is the frozen submission. Regenerate it from the Markdown rather
+than editing `main.tex`.
+
 Build outputs (`build/`, `paper.pdf`, `paper-ieee.pdf`) are gitignored.
 
 ---
