@@ -24,3 +24,9 @@ data/*.log
 build/
 paper.pdf
 paper-ieee.pdf
+# arxiv/ itself is committed (the frozen submission); never its build products.
+arxiv/*.pdf
+arxiv/*.log
+arxiv/*.aux
+arxiv/*.out
+arxiv/*.fls
