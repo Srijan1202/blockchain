@@ -96,7 +96,8 @@ foreach ($fig in $script:ExpectedFigures) {
 
 $commit = (& git -C $script:RepoRoot rev-parse HEAD).Trim()
 $short = $commit.Substring(0, 12)
-$dirty = (& git -C $script:RepoRoot status --porcelain -- docs/PAPER.md analysis/figures scripts).Trim()
+# @() so that a clean tree (git prints nothing, returns $null) is an empty string, not a null.
+$dirty = (@(& git -C $script:RepoRoot status --porcelain -- docs/PAPER.md analysis/figures scripts) -join "`n").Trim()
 if ($dirty) { Write-Host "  NOTE: docs/PAPER.md, analysis/figures or scripts/ have uncommitted changes; README records the commit as '$short (with uncommitted changes)'." -ForegroundColor Yellow; $short = "$short (with uncommitted changes)" }
 
 $readme = @"
