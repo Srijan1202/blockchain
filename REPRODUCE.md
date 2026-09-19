@@ -317,6 +317,66 @@ paper, but not recollect the observations behind them.
 
 ---
 
+## 9a. Building the PDF (optional; Windows)
+
+Two scripts render `docs/PAPER.md`. Neither modifies it: each writes a preprocessed copy to
+`build/` and compiles that, so the Markdown stays canonical.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-pdf.ps1        # -> paper.pdf       (A4, one column, TOC)
+powershell -ExecutionPolicy Bypass -File scripts/build-pdf-ieee.ps1   # -> paper-ieee.pdf  (IEEEtran two-column)
+```
+
+**Requirements.** pandoc 3.x and MiKTeX (xelatex). Both scripts end with a verification
+block read from the xelatex log and recorder file, not from the exit code: page count, zero
+LaTeX errors, all five figures actually read, no missing glyphs, and the overfull-hbox count
+with its worst magnitude. A font that fails to load stops the build with its name.
+
+**Refresh MiKTeX first, once.** MiKTeX installs packages on demand during a build and warns
+that it "has never checked for updates". With a stale package database those on-demand
+installs fail in ways that look unrelated to the real cause. Run both of these before the
+first build; the second is what clears the warning and it exits 100 when updates exist,
+which is not an error:
+
+```powershell
+miktex packages update-package-database
+miktex packages check-update
+```
+
+The first build is slow (several minutes): MiKTeX fetches `fontspec`, `unicode-math`,
+`IEEEtran` and their dependencies, and rebuilds its font cache. Later builds take under a
+minute.
+
+**Fonts.** The scripts use Cambria (body) and Consolas (mono) for the one-column build and
+Times New Roman / Consolas for IEEE, because these ship with Windows. DejaVu, which the
+figures and most Linux builds use, is not installed here and is not available through
+winget. Cambria has no glyphs for Unicode sub- and superscripts, so the build copy rewrites
+the paper's twelve such tokens on eight lines (H₀, H₁, 10⁻⁹, 10⁻⁶) as LaTeX math and refuses to build if any
+survive — otherwise they render as blank boxes with no error. On a machine with DejaVu, pass
+`-V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono"` to pandoc instead; the
+substitution is the only Windows-specific part.
+
+**What the preprocessing does**, all mechanical: lifts the H1 title into metadata so it is
+not both a TOC entry and a heading; inserts the blank line Markdown needs before a blockquote
+or image that directly follows a paragraph; and the sub/superscript rewrite above. The
+build is run with `--from=markdown-implicit_figures` because the paper writes its own
+"**Figure N.**" captions and pandoc would otherwise add a second, differently numbered one
+from the alt text; and with `--shift-heading-level-by=-1` so that, with the H1 gone, the
+paper's `##` sections are top-level.
+
+**The IEEE build rewrites what pandoc emits**, because a two-column IEEEtran document breaks
+pandoc's LaTeX in four places: `longtable` does not work in two-column mode at all, so every
+table becomes `tabular` inside a `table*`; tables with six or more columns get content-sized
+`l` columns instead of pandoc's equal-width `p{}` specs (the 8-column scan table is
+unreadable otherwise); the five figures become `figure*` at 0.86 of the text width; and
+IEEEtran's own section numbering is switched off, since the paper numbers its sections in
+the text and some eighty cross-references depend on those numbers. The paper's caption
+paragraphs are moved inside the float they describe so they travel with it.
+
+Build outputs (`build/`, `paper.pdf`, `paper-ieee.pdf`) are gitignored.
+
+---
+
 ## 10. Verification log
 
 Followed on a fresh clone from the remote, 2026-09-15, Windows 11, Node v26.3.1,
