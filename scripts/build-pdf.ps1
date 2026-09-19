@@ -17,6 +17,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "lib\PaperBuild.ps1")
+. (Join-Path $PSScriptRoot "lib\TwoColumn.ps1")
 
 Assert-Tool pandoc
 Assert-Tool xelatex
@@ -31,6 +32,11 @@ $outPath = Join-Path $script:RepoRoot $Out
 Write-Host "[1/4] preprocessing build copy"
 New-PaperBuildCopy -OutPath $buildMd | Out-Null
 
+# Header include: hyphenation inside \texttt, and a line break allowed after "_" so
+# that identifiers such as M_C3_op_l1_data_fee_wei are not unbreakable boxes.
+$header = Join-Path $script:BuildDir "header.tex"
+Write-Utf8 $header ("\usepackage[htt]{hyphenat}`n\usepackage{xltabular}`n" + $script:BreakableUnderscore + "`n")
+
 Write-Host "[2/4] pandoc -> LaTeX"
 # --from=markdown-implicit_figures: the paper writes its own "**Figure N.**" captions.
 # With implicit figures on, pandoc would also emit "Figure N:" from the alt text and
@@ -44,6 +50,7 @@ try {
         --from=markdown-implicit_figures `
         --shift-heading-level-by=-1 `
         --to=latex --standalone `
+        -H $header `
         -o $tex `
         --pdf-engine=xelatex `
         --resource-path=".;docs;analysis/figures" `
@@ -63,7 +70,11 @@ try {
 $figAbs = ($script:FigureDir -replace '\\', '/')
 $texText = Read-Utf8 $tex
 $texText = $texText.Replace("{../analysis/figures/", "{$figAbs/")
-Write-Utf8 $tex $texText
+# Wide tables: pandoc's equal-width p{} columns squeeze "SequencerInbox" into a
+# 2 cm cell and overflow it. Six or more columns -> content-sized l columns.
+$wide = Convert-WideLongtables -Tex $texText
+Write-Host ("  wide tables given content-sized columns: {0}" -f $wide.Wide)
+Write-Utf8 $tex $wide.Tex
 
 Write-Host "[3/4] xelatex"
 $log = Invoke-XeLaTeX -TexPath $tex -WorkDir $script:BuildDir
