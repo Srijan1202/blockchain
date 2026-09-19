@@ -2,6 +2,7 @@
 
 **Complete draft.** All citations in §12 verified against arXiv, the ACM Digital Library, IEEE
 Xplore and DBLP.
+
 > Section numbering is contiguous: the experiment matrix and metric definitions that stood as
 > separate sections in the research plan are folded into §4, and the results sections were
 > renumbered to close the gap.
@@ -591,6 +592,7 @@ Table 7 gives per-run component shares of `total_fee_wei`, medians with ranges [
 | op-sepolia / forced | **100%** — all 25 runs | **none — no L2 leg exists** |
 
 **Table 7.** Forced-path cost composition, per-run medians with ranges [E2]. The OP Stack has no L2 leg on this path: a deposit prepays its execution on L1.
+
 ![Forced-path cost decomposition by component.](../analysis/figures/cost_decomposition.png)
 
 **Figure 5.** Forced-path cost decomposition. Components are shown *within* each protocol only:

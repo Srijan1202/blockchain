@@ -19,3 +19,8 @@ data/*.log
 
 # Python virtual environments (REPRODUCE.md creates one)
 .venv*/
+
+# PDF build (scripts/build-pdf*.ps1). Regenerated from docs/PAPER.md; see REPRODUCE.md 9a.
+build/
+paper.pdf
+paper-ieee.pdf
