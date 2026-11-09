@@ -1,6 +1,6 @@
 # arXiv submission package
 
-Generated from `docs/PAPER.md` at commit `f1ed78b03e44` by `scripts/package-arxiv.ps1`.
+Generated from `docs/PAPER.md` at commit `31f65fbb796a (with uncommitted changes)` by `scripts/package-arxiv.ps1`.
 Do not edit `main.tex` by hand; edit the Markdown and regenerate.
 
 ## Contents

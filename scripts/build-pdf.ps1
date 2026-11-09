@@ -56,6 +56,7 @@ try {
         --resource-path=".;docs;analysis/figures" `
         --toc --toc-depth=2 `
         -V "title=$($script:PaperTitle)" `
+        -V "author=$($script:PaperAuthor), $($script:PaperAffiliation), $($script:PaperLocation)" `
         -V "geometry:a4paper,margin=2.2cm" `
         -V fontsize=10pt `
         -V "mainfont=Cambria" -V "monofont=Consolas" `

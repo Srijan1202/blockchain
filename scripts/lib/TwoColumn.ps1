@@ -176,11 +176,14 @@ __UNDERSCORE__
 \setlength{\emergencystretch}{3em}
 \begin{document}
 \title{__TITLE__}
-\author{\IEEEauthorblockN{Srijan Srivastava}
-\IEEEauthorblockA{Vellore Institute of Technology\\Vellore, India}}
+\author{\IEEEauthorblockN{__AUTHOR__}
+\IEEEauthorblockA{__AFFILIATION__\\__LOCATION__}}
 \maketitle
 '@
-    $preamble = $preamble.Replace("__TITLE__", $script:PaperTitle).Replace("__FONTS__", $FontSetup.Trim()).Replace("__UNDERSCORE__", $script:BreakableUnderscore)
+    $preamble = $preamble.Replace("__TITLE__", $script:PaperTitle).Replace("__FONTS__", $FontSetup.Trim()).Replace("__UNDERSCORE__", $script:BreakableUnderscore).Replace("__AUTHOR__", $script:PaperAuthor).Replace("__AFFILIATION__", $script:PaperAffiliation).Replace("__LOCATION__", $script:PaperLocation)
+    foreach ($ph in @("__TITLE__", "__FONTS__", "__UNDERSCORE__", "__AUTHOR__", "__AFFILIATION__", "__LOCATION__")) {
+        if ($preamble.Contains($ph)) { throw "Preamble placeholder $ph was never substituted." }
+    }
     return $preamble + "`n" + $Body + "`n\end{document}`n"
 }
 

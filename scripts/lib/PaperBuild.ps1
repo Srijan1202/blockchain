@@ -22,6 +22,13 @@ $script:ExpectedFigures = @(
 
 $script:PaperTitle = "Escape Hatches in the Wild: Measuring the Real Censorship-Resistance of Ethereum Layer-2 Rollups"
 
+# Author identity. Kept here beside the title so there is exactly one place to
+# change it; the IEEE preamble in TwoColumn.ps1 reads these rather than spelling
+# a name out inside a here-string where a wrong one can sit unnoticed.
+$script:PaperAuthor = "Srijan Srivastava"
+$script:PaperAffiliation = "Vellore Institute of Technology"
+$script:PaperLocation = "Vellore, India"
+
 function Read-Utf8 {
     param([string]$Path)
     # Normalise to LF: pandoc and xelatex write CRLF on Windows, and every regex in
